@@ -1,0 +1,400 @@
+{"ts":"2026-07-12 20:49:39","sid":"6143c2","ev":"app_start","d":{"version":"2026.07.08-r1"}}
+{"ts":"2026-07-12 20:49:40","sid":"6143c2","ev":"warning_shown","d":{"name":"older_file_version"}}
+{"ts":"2026-07-12 20:49:59","sid":"6143c2","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-12 20:50:00","sid":"6143c2","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-12 20:50:00","sid":"6143c2","ev":"file_open","d":{"path":"C:/Users/ccbefb/OneDrive - Hussmann Corporation/Desktop/VPM/CO-PILOT TRIALS/vpm_tracker-2/DG-PH2-6-25.vpmt","projects":2,"tasks":240}}
+{"ts":"2026-07-12 20:50:19","sid":"6143c2","ev":"warning_shown","d":{"name":"older_file_version"}}
+{"ts":"2026-07-12 20:50:21","sid":"6143c2","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-12 20:50:21","sid":"6143c2","ev":"tab_switch","d":{"to":"project:-1"}}
+{"ts":"2026-07-12 20:50:21","sid":"6143c2","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-12 20:50:21","sid":"6143c2","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-12 20:50:23","sid":"6143c2","ev":"file_open","d":{"path":"C:/Users/ccbefb/OneDrive - Hussmann Corporation/Desktop/VPM/CO-PILOT TRIALS/vpm_tracker-2/DG-PH2-6-25.vpmt","projects":2,"tasks":240}}
+{"ts":"2026-07-12 20:50:32","sid":"6143c2","ev":"vave_toggle","d":{"on":true}}
+{"ts":"2026-07-12 20:50:35","sid":"6143c2","ev":"tab_switch","d":{"to":"visuals"}}
+{"ts":"2026-07-12 20:50:36","sid":"6143c2","ev":"tab_switch","d":{"to":"tracker"}}
+{"ts":"2026-07-12 20:50:56","sid":"6143c2","ev":"app_end","d":{"secs":77}}
+{"ts":"2026-07-12 20:51:08","sid":"daa2a6","ev":"app_start","d":{"version":"2026.07.08-r1"}}
+{"ts":"2026-07-12 20:51:09","sid":"daa2a6","ev":"warning_shown","d":{"name":"older_file_version"}}
+{"ts":"2026-07-12 20:51:14","sid":"daa2a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-12 20:51:14","sid":"daa2a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-12 20:51:14","sid":"daa2a6","ev":"file_open","d":{"path":"C:/Users/ccbefb/OneDrive - Hussmann Corporation/Desktop/VPM/CO-PILOT TRIALS/vpm_tracker-2/DG-PH2-6-25.vpmt","projects":2,"tasks":240}}
+{"ts":"2026-07-12 20:51:22","sid":"daa2a6","ev":"menu_action","d":{"name":"Load\u2026"}}
+{"ts":"2026-07-12 20:53:58","sid":"daa2a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-12 20:54:02","sid":"daa2a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-12 20:54:06","sid":"daa2a6","ev":"vave_toggle","d":{"on":true}}
+{"ts":"2026-07-12 20:54:14","sid":"daa2a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-12 20:54:20","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-12 20:54:47","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-12 20:54:54","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-12 20:55:17","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-12 20:57:14","sid":"daa2a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 09:00:57","sid":"daa2a6","ev":"zoom","d":{"pct":110}}
+{"ts":"2026-07-14 09:00:59","sid":"daa2a6","ev":"zoom","d":{"pct":100}}
+{"ts":"2026-07-14 09:03:39","sid":"daa2a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 10:01:32","sid":"daa2a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":1250}}
+{"ts":"2026-07-14 10:03:38","sid":"daa2a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 10:04:34","sid":"daa2a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":1157}}
+{"ts":"2026-07-14 10:04:40","sid":"daa2a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":1090}}
+{"ts":"2026-07-14 10:05:02","sid":"daa2a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":1135}}
+{"ts":"2026-07-14 10:05:06","sid":"daa2a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":406}}
+{"ts":"2026-07-14 10:05:11","sid":"daa2a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":420}}
+{"ts":"2026-07-14 10:05:13","sid":"daa2a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":705}}
+{"ts":"2026-07-14 10:06:00","sid":"daa2a6","ev":"notes_pad_open","d":{}}
+{"ts":"2026-07-14 10:06:00","sid":"daa2a6","ev":"quick_capture","d":{"via":"ctrl_space","kind":"open_pad"}}
+{"ts":"2026-07-14 10:06:38","sid":"daa2a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 10:09:03","sid":"daa2a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-14 10:09:38","sid":"daa2a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 10:11:26","sid":"daa2a6","ev":"indent","d":{"count":1}}
+{"ts":"2026-07-14 10:12:17","sid":"daa2a6","ev":"outdent","d":{"count":1}}
+{"ts":"2026-07-14 10:12:19","sid":"daa2a6","ev":"outdent","d":{"count":1}}
+{"ts":"2026-07-14 10:12:20","sid":"daa2a6","ev":"outdent","d":{"count":1}}
+{"ts":"2026-07-14 10:12:38","sid":"daa2a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 10:13:26","sid":"daa2a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":1414}}
+{"ts":"2026-07-14 10:15:38","sid":"daa2a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 10:16:13","sid":"daa2a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":21039}}
+{"ts":"2026-07-14 10:16:17","sid":"daa2a6","ev":"tab_switch","d":{"to":"visuals"}}
+{"ts":"2026-07-14 10:16:18","sid":"daa2a6","ev":"tab_switch","d":{"to":"tracker"}}
+{"ts":"2026-07-14 10:18:32","sid":"daa2a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-14 10:18:38","sid":"daa2a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 10:20:41","sid":"daa2a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":4065}}
+{"ts":"2026-07-14 10:21:38","sid":"daa2a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 10:21:44","sid":"daa2a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":2261}}
+{"ts":"2026-07-14 10:22:08","sid":"daa2a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":914}}
+{"ts":"2026-07-14 10:24:38","sid":"daa2a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 10:38:10","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:38:21","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:38:30","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:38:36","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:38:42","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:38:45","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:38:47","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:38:52","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:39:38","sid":"daa2a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 10:43:31","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:43:35","sid":"daa2a6","ev":"menu_action","d":{"name":"Undo"}}
+{"ts":"2026-07-14 10:43:35","sid":"daa2a6","ev":"undo","d":{}}
+{"ts":"2026-07-14 10:45:02","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:45:08","sid":"daa2a6","ev":"menu_action","d":{"name":"Undo"}}
+{"ts":"2026-07-14 10:45:08","sid":"daa2a6","ev":"undo","d":{}}
+{"ts":"2026-07-14 10:45:12","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:45:24","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:45:38","sid":"daa2a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 10:45:41","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:46:01","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:46:06","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:46:11","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:46:16","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:46:26","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:46:32","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:46:38","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:46:41","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:46:45","sid":"daa2a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-14 10:46:48","sid":"daa2a6","ev":"tab_switch","d":{"to":"visuals"}}
+{"ts":"2026-07-14 10:46:49","sid":"daa2a6","ev":"tab_switch","d":{"to":"tracker"}}
+{"ts":"2026-07-14 10:47:31","sid":"daa2a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":1939}}
+{"ts":"2026-07-14 10:47:39","sid":"daa2a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":1517}}
+{"ts":"2026-07-14 10:47:57","sid":"daa2a6","ev":"menu_action","d":{"name":"Save"}}
+{"ts":"2026-07-14 10:47:57","sid":"daa2a6","ev":"file_save","d":{"manual":true}}
+{"ts":"2026-07-14 10:48:28","sid":"daa2a6","ev":"menu_action","d":{"name":"Save"}}
+{"ts":"2026-07-14 10:48:28","sid":"daa2a6","ev":"file_save","d":{"manual":true}}
+{"ts":"2026-07-14 11:34:32","sid":"daa2a6","ev":"zoom","d":{"pct":110}}
+{"ts":"2026-07-14 13:20:07","sid":"daa2a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-14 13:22:26","sid":"daa2a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-14 13:23:40","sid":"daa2a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-14 13:25:01","sid":"daa2a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-14 13:45:28","sid":"0781a6","ev":"app_start","d":{"version":"2026.07.08-r1"}}
+{"ts":"2026-07-14 13:45:35","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-14 13:45:37","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-14 13:45:37","sid":"0781a6","ev":"file_open","d":{"path":"C:/Users/ccbefb/OneDrive - Hussmann Corporation/Desktop/VPM/CO-PILOT TRIALS/vpm_tracker-2/DG-PH2-6-25.vpmt","projects":2,"tasks":243}}
+{"ts":"2026-07-14 14:27:08","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-14 14:37:25","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-14 14:56:31","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-14 14:56:34","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-14 14:56:37","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-14 14:56:42","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-14 14:57:27","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-14 15:05:53","sid":"0781a6","ev":"notes_pad_open","d":{}}
+{"ts":"2026-07-14 15:05:53","sid":"0781a6","ev":"quick_capture","d":{"via":"ctrl_space","kind":"open_pad"}}
+{"ts":"2026-07-14 15:06:36","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 15:09:36","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 15:12:36","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 15:15:36","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 15:18:36","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 15:21:36","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 15:24:36","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 15:30:36","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 15:42:36","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 15:45:36","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 15:51:36","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-14 15:54:36","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-15 10:52:36","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-15 17:26:05","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-15 17:26:07","sid":"0781a6","ev":"tab_switch","d":{"to":"visuals"}}
+{"ts":"2026-07-15 17:26:14","sid":"0781a6","ev":"tab_switch","d":{"to":"tracker"}}
+{"ts":"2026-07-15 17:26:19","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-15 17:26:21","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-15 17:26:21","sid":"0781a6","ev":"tab_switch","d":{"to":"visuals"}}
+{"ts":"2026-07-15 17:26:22","sid":"0781a6","ev":"tab_switch","d":{"to":"tracker"}}
+{"ts":"2026-07-15 17:26:25","sid":"0781a6","ev":"tab_switch","d":{"to":"visuals"}}
+{"ts":"2026-07-15 17:26:26","sid":"0781a6","ev":"tab_switch","d":{"to":"tracker"}}
+{"ts":"2026-07-15 17:26:29","sid":"0781a6","ev":"tab_switch","d":{"to":"visuals"}}
+{"ts":"2026-07-15 17:26:30","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-15 17:26:31","sid":"0781a6","ev":"tab_switch","d":{"to":"visuals"}}
+{"ts":"2026-07-15 17:26:35","sid":"0781a6","ev":"tab_switch","d":{"to":"tracker"}}
+{"ts":"2026-07-15 17:26:38","sid":"0781a6","ev":"tab_switch","d":{"to":"visuals"}}
+{"ts":"2026-07-15 17:26:40","sid":"0781a6","ev":"tab_switch","d":{"to":"tracker"}}
+{"ts":"2026-07-15 17:26:41","sid":"0781a6","ev":"tab_switch","d":{"to":"visuals"}}
+{"ts":"2026-07-16 11:19:09","sid":"0781a6","ev":"tab_switch","d":{"to":"tracker"}}
+{"ts":"2026-07-16 11:19:09","sid":"0781a6","ev":"notes_pad_open","d":{}}
+{"ts":"2026-07-16 11:19:09","sid":"0781a6","ev":"quick_capture","d":{"via":"ctrl_space","kind":"open_pad"}}
+{"ts":"2026-07-16 11:20:56","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-16 12:21:00","sid":"0781a6","ev":"notes_pad_open","d":{}}
+{"ts":"2026-07-16 12:21:00","sid":"0781a6","ev":"quick_capture","d":{"via":"ctrl_space","kind":"open_pad"}}
+{"ts":"2026-07-16 12:23:56","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-16 12:34:57","sid":"0781a6","ev":"dialog","d":{"name":"notes_edit","outcome":"ok","ms_open":14217}}
+{"ts":"2026-07-16 12:35:56","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-16 12:52:15","sid":"0781a6","ev":"notes_pad_open","d":{}}
+{"ts":"2026-07-16 12:52:15","sid":"0781a6","ev":"quick_capture","d":{"via":"ctrl_space","kind":"open_pad"}}
+{"ts":"2026-07-16 12:53:56","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-16 12:56:56","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-16 12:59:56","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-16 13:02:56","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-16 13:05:56","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-16 13:08:56","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-16 13:12:01","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-16 13:12:03","sid":"0781a6","ev":"tab_switch","d":{"to":"tracker"}}
+{"ts":"2026-07-16 13:12:12","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-16 14:29:56","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-16 14:32:56","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-16 15:35:56","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-17 10:28:22","sid":"0781a6","ev":"notes_pad_open","d":{}}
+{"ts":"2026-07-17 10:28:22","sid":"0781a6","ev":"quick_capture","d":{"via":"ctrl_space","kind":"open_pad"}}
+{"ts":"2026-07-17 10:51:55","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-20 09:38:10","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-20 09:38:15","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-20 09:38:17","sid":"0781a6","ev":"tab_switch","d":{"to":"visuals"}}
+{"ts":"2026-07-20 09:38:23","sid":"0781a6","ev":"tab_switch","d":{"to":"tracker"}}
+{"ts":"2026-07-20 09:38:25","sid":"0781a6","ev":"tab_switch","d":{"to":"visuals"}}
+{"ts":"2026-07-20 09:38:51","sid":"0781a6","ev":"tab_switch","d":{"to":"tracker"}}
+{"ts":"2026-07-20 09:38:54","sid":"0781a6","ev":"tab_switch","d":{"to":"visuals"}}
+{"ts":"2026-07-20 13:14:10","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-20 13:14:34","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-20 13:14:35","sid":"0781a6","ev":"tab_switch","d":{"to":"tracker"}}
+{"ts":"2026-07-20 13:14:41","sid":"0781a6","ev":"tab_switch","d":{"to":"visuals"}}
+{"ts":"2026-07-20 13:14:59","sid":"0781a6","ev":"tab_switch","d":{"to":"tracker"}}
+{"ts":"2026-07-20 13:15:04","sid":"0781a6","ev":"tab_switch","d":{"to":"visuals"}}
+{"ts":"2026-07-20 13:15:08","sid":"0781a6","ev":"tab_switch","d":{"to":"tracker"}}
+{"ts":"2026-07-20 13:15:13","sid":"0781a6","ev":"tab_switch","d":{"to":"visuals"}}
+{"ts":"2026-07-20 13:15:15","sid":"0781a6","ev":"tab_switch","d":{"to":"tracker"}}
+{"ts":"2026-07-20 13:15:15","sid":"0781a6","ev":"tab_switch","d":{"to":"visuals"}}
+{"ts":"2026-07-20 13:15:16","sid":"0781a6","ev":"tab_switch","d":{"to":"tracker"}}
+{"ts":"2026-07-20 15:29:01","sid":"0781a6","ev":"notes_pad_open","d":{}}
+{"ts":"2026-07-20 15:29:01","sid":"0781a6","ev":"quick_capture","d":{"via":"ctrl_space","kind":"open_pad"}}
+{"ts":"2026-07-21 09:27:27","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-21 10:36:33","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-21 10:36:35","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-21 11:17:34","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-21 11:27:45","sid":"0781a6","ev":"dialog","d":{"name":"notes_edit","outcome":"ok","ms_open":4240}}
+{"ts":"2026-07-21 11:28:31","sid":"0781a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":20604}}
+{"ts":"2026-07-21 11:28:49","sid":"0781a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":5607}}
+{"ts":"2026-07-21 11:30:00","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-21 11:33:00","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-21 13:17:31","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-21 13:19:09","sid":"0781a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":52788}}
+{"ts":"2026-07-21 13:21:00","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-21 13:32:33","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-21 13:32:39","sid":"0781a6","ev":"zoom","d":{"pct":120}}
+{"ts":"2026-07-21 13:32:39","sid":"0781a6","ev":"zoom","d":{"pct":130}}
+{"ts":"2026-07-21 13:32:39","sid":"0781a6","ev":"zoom","d":{"pct":140}}
+{"ts":"2026-07-21 13:44:29","sid":"0781a6","ev":"dialog","d":{"name":"notes_edit","outcome":"ok","ms_open":7723}}
+{"ts":"2026-07-21 13:45:00","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-21 14:13:07","sid":"0781a6","ev":"zoom","d":{"pct":130}}
+{"ts":"2026-07-21 14:15:15","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-21 14:15:48","sid":"0781a6","ev":"zoom","d":{"pct":120}}
+{"ts":"2026-07-21 14:26:36","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-21 14:26:38","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-22 17:52:55","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-23 13:06:52","sid":"0781a6","ev":"tab_switch","d":{"to":"visuals"}}
+{"ts":"2026-07-23 13:06:55","sid":"0781a6","ev":"tab_switch","d":{"to":"tracker"}}
+{"ts":"2026-07-23 13:14:01","sid":"0781a6","ev":"notes_pad_open","d":{}}
+{"ts":"2026-07-23 13:14:01","sid":"0781a6","ev":"quick_capture","d":{"via":"ctrl_space","kind":"open_pad"}}
+{"ts":"2026-07-23 13:14:32","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-23 21:24:40","sid":"0781a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":13909}}
+{"ts":"2026-07-23 21:27:24","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-23 21:27:55","sid":"0781a6","ev":"dialog","d":{"name":"impact_review","outcome":"cancel","ms_open":6418}}
+{"ts":"2026-07-23 21:28:56","sid":"0781a6","ev":"dialog","d":{"name":"impact_review","outcome":"cancel","ms_open":2571}}
+{"ts":"2026-07-23 21:29:17","sid":"0781a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":13045}}
+{"ts":"2026-07-23 21:29:43","sid":"0781a6","ev":"warning_shown","d":{"name":"no_baseline"}}
+{"ts":"2026-07-23 21:30:21","sid":"0781a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":3689}}
+{"ts":"2026-07-23 21:30:24","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-23 21:31:03","sid":"0781a6","ev":"task_delete","d":{"count":1}}
+{"ts":"2026-07-23 21:31:08","sid":"0781a6","ev":"task_delete","d":{"count":1}}
+{"ts":"2026-07-23 21:31:48","sid":"0781a6","ev":"dialog","d":{"name":"impact_review","outcome":"cancel","ms_open":6514}}
+{"ts":"2026-07-23 21:32:17","sid":"0781a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":17626}}
+{"ts":"2026-07-23 21:33:13","sid":"0781a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":20804}}
+{"ts":"2026-07-23 21:33:24","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-23 21:34:06","sid":"0781a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":2791}}
+{"ts":"2026-07-23 21:36:06","sid":"0781a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":36519}}
+{"ts":"2026-07-23 21:36:24","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-23 21:36:43","sid":"0781a6","ev":"dialog","d":{"name":"notes_edit","outcome":"ok","ms_open":27184}}
+{"ts":"2026-07-23 21:37:27","sid":"0781a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":29982}}
+{"ts":"2026-07-23 21:39:24","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-24 09:47:15","sid":"0781a6","ev":"notes_pad_open","d":{}}
+{"ts":"2026-07-24 09:47:15","sid":"0781a6","ev":"quick_capture","d":{"via":"ctrl_space","kind":"open_pad"}}
+{"ts":"2026-07-24 09:47:26","sid":"0781a6","ev":"note_promoted","d":{"to":"task"}}
+{"ts":"2026-07-24 09:47:26","sid":"0781a6","ev":"task_add","d":{"via":"note_drop","count":1}}
+{"ts":"2026-07-24 09:47:34","sid":"0781a6","ev":"task_delete","d":{"count":1}}
+{"ts":"2026-07-24 09:47:58","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-24 21:09:24","sid":"fcbc76","ev":"app_start","d":{"version":"2026.07.08-r1"}}
+{"ts":"2026-07-24 21:09:26","sid":"fcbc76","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-24 21:09:26","sid":"fcbc76","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-24 21:09:26","sid":"fcbc76","ev":"file_open","d":{"path":"C:/Users/ccbefb/OneDrive - Hussmann Corporation/Desktop/VPM/CO-PILOT TRIALS/vpm_tracker-2/DG-PH2-6-25.vpmt","projects":2,"tasks":241}}
+{"ts":"2026-07-24 21:09:54","sid":"fcbc76","ev":"app_end","d":{"secs":30}}
+{"ts":"2026-07-28 13:19:03","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-28 13:22:40","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-28 13:33:20","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-28 13:36:00","sid":"0781a6","ev":"dialog","d":{"name":"notes_edit","outcome":"ok","ms_open":9482}}
+{"ts":"2026-07-28 13:37:40","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-28 13:39:01","sid":"0781a6","ev":"dialog","d":{"name":"notes_edit","outcome":"ok","ms_open":75320}}
+{"ts":"2026-07-28 13:39:58","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-28 13:40:39","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-28 13:40:48","sid":"0781a6","ev":"dialog","d":{"name":"notes_edit","outcome":"ok","ms_open":44068}}
+{"ts":"2026-07-28 13:40:54","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-28 13:43:40","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-28 13:48:37","sid":"0781a6","ev":"dialog","d":{"name":"notes_edit","outcome":"ok","ms_open":20487}}
+{"ts":"2026-07-28 13:49:40","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-28 13:52:40","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-28 13:57:30","sid":"0781a6","ev":"menu_action","d":{"name":"Undo"}}
+{"ts":"2026-07-28 13:57:30","sid":"0781a6","ev":"undo","d":{}}
+{"ts":"2026-07-28 13:57:49","sid":"0781a6","ev":"indent","d":{"count":1}}
+{"ts":"2026-07-28 13:58:40","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-28 13:59:09","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-28 13:59:17","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-28 13:59:56","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-28 14:00:56","sid":"0781a6","ev":"dialog","d":{"name":"notes_edit","outcome":"ok","ms_open":12828}}
+{"ts":"2026-07-28 14:01:40","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-29 10:53:22","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-29 10:59:27","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-29 11:01:29","sid":"0781a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":1625}}
+{"ts":"2026-07-29 11:02:27","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-29 11:02:41","sid":"0781a6","ev":"menu_action","d":{"name":"Save"}}
+{"ts":"2026-07-29 11:02:41","sid":"0781a6","ev":"file_save","d":{"manual":true}}
+{"ts":"2026-07-29 11:04:29","sid":"0781a6","ev":"task_delete","d":{"count":1}}
+{"ts":"2026-07-29 11:05:27","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-29 11:05:33","sid":"0781a6","ev":"zoom","d":{"pct":110}}
+{"ts":"2026-07-29 11:07:48","sid":"0781a6","ev":"menu_action","d":{"name":"Save"}}
+{"ts":"2026-07-29 11:07:48","sid":"0781a6","ev":"file_save","d":{"manual":true}}
+{"ts":"2026-07-30 12:29:08","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-30 12:30:18","sid":"0781a6","ev":"indent","d":{"count":1}}
+{"ts":"2026-07-30 12:31:52","sid":"0781a6","ev":"indent","d":{"count":1}}
+{"ts":"2026-07-30 12:31:56","sid":"0781a6","ev":"indent","d":{"count":1}}
+{"ts":"2026-07-30 12:32:08","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-30 12:32:13","sid":"0781a6","ev":"outdent","d":{"count":1}}
+{"ts":"2026-07-30 12:32:22","sid":"0781a6","ev":"outdent","d":{"count":1}}
+{"ts":"2026-07-30 12:32:58","sid":"0781a6","ev":"indent","d":{"count":1}}
+{"ts":"2026-07-30 12:33:06","sid":"0781a6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-30 12:33:45","sid":"0781a6","ev":"dialog","d":{"name":"notes_edit","outcome":"ok","ms_open":24224}}
+{"ts":"2026-07-30 12:35:08","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-30 12:35:21","sid":"0781a6","ev":"indent","d":{"count":1}}
+{"ts":"2026-07-30 12:38:08","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-30 12:57:42","sid":"0781a6","ev":"notes_pad_open","d":{}}
+{"ts":"2026-07-30 12:57:42","sid":"0781a6","ev":"quick_capture","d":{"via":"ctrl_space","kind":"open_pad"}}
+{"ts":"2026-07-30 12:59:08","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-30 13:07:52","sid":"0781a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":30137}}
+{"ts":"2026-07-30 13:08:07","sid":"0781a6","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":6503}}
+{"ts":"2026-07-30 13:08:08","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-30 15:50:44","sid":"0781a6","ev":"notes_pad_open","d":{}}
+{"ts":"2026-07-30 15:50:45","sid":"0781a6","ev":"quick_capture","d":{"via":"ctrl_space","kind":"open_pad"}}
+{"ts":"2026-07-30 15:53:08","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-30 15:56:08","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-30 15:56:23","sid":"0781a6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-30 15:56:28","sid":"0781a6","ev":"note_promoted","d":{"to":"task"}}
+{"ts":"2026-07-30 15:56:28","sid":"0781a6","ev":"task_add","d":{"via":"note_drop","count":1}}
+{"ts":"2026-07-30 15:56:38","sid":"0781a6","ev":"note_promoted","d":{"to":"task"}}
+{"ts":"2026-07-30 15:56:38","sid":"0781a6","ev":"task_add","d":{"via":"note_drop","count":1}}
+{"ts":"2026-07-30 15:59:08","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-30 16:11:08","sid":"0781a6","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-30 16:12:09","sid":"0781a6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-30 23:04:18","sid":"0781a6","ev":"app_end","d":{"secs":1415931}}
+{"ts":"2026-07-30 23:04:30","sid":"4c11f6","ev":"app_start","d":{"version":"2026.07.08-r1"}}
+{"ts":"2026-07-30 23:04:32","sid":"4c11f6","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-30 23:04:32","sid":"4c11f6","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-30 23:04:32","sid":"4c11f6","ev":"file_open","d":{"path":"C:/Users/ccbefb/OneDrive - Hussmann Corporation/Desktop/VPM/CO-PILOT TRIALS/vpm_tracker-2/DG-PH2-6-25.vpmt","projects":2,"tasks":252}}
+{"ts":"2026-07-30 23:04:48","sid":"4c11f6","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-30 23:04:54","sid":"4c11f6","ev":"menu_action","d":{"name":"Save"}}
+{"ts":"2026-07-30 23:04:54","sid":"4c11f6","ev":"file_save","d":{"manual":true}}
+{"ts":"2026-07-30 23:04:56","sid":"4c11f6","ev":"app_end","d":{"secs":25}}
+{"ts":"2026-07-30 23:17:12","sid":"b22a38","ev":"app_start","d":{"version":"2026.07.08-r1"}}
+{"ts":"2026-07-30 23:17:13","sid":"b22a38","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-30 23:17:13","sid":"b22a38","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-30 23:17:13","sid":"b22a38","ev":"file_open","d":{"path":"C:/Users/ccbefb/OneDrive - Hussmann Corporation/Desktop/VPM/CO-PILOT TRIALS/vpm_tracker-2/DG-PH2-6-25.vpmt","projects":2,"tasks":252}}
+{"ts":"2026-07-30 23:17:57","sid":"b22a38","ev":"dialog","d":{"name":"impact_review","outcome":"cancel","ms_open":5073}}
+{"ts":"2026-07-30 23:18:44","sid":"b22a38","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":22417}}
+{"ts":"2026-07-30 23:18:50","sid":"b22a38","ev":"menu_action","d":{"name":"Undo"}}
+{"ts":"2026-07-30 23:18:50","sid":"b22a38","ev":"undo","d":{}}
+{"ts":"2026-07-30 23:20:13","sid":"b22a38","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-30 23:21:41","sid":"b22a38","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":2074}}
+{"ts":"2026-07-30 23:21:59","sid":"b22a38","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":1421}}
+{"ts":"2026-07-30 23:23:13","sid":"b22a38","ev":"indent","d":{"count":1}}
+{"ts":"2026-07-30 23:23:13","sid":"b22a38","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-30 23:23:43","sid":"b22a38","ev":"warning_shown","d":{"name":"start_is_auto"}}
+{"ts":"2026-07-30 23:24:00","sid":"b22a38","ev":"warning_shown","d":{"name":"start_is_auto"}}
+{"ts":"2026-07-30 23:24:08","sid":"b22a38","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":2066}}
+{"ts":"2026-07-30 23:24:54","sid":"b22a38","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":1164}}
+{"ts":"2026-07-30 23:25:24","sid":"b22a38","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":468}}
+{"ts":"2026-07-30 23:25:30","sid":"b22a38","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":459}}
+{"ts":"2026-07-30 23:26:13","sid":"b22a38","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-30 23:26:21","sid":"b22a38","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":1692}}
+{"ts":"2026-07-30 23:27:34","sid":"b22a38","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":1151}}
+{"ts":"2026-07-30 23:29:13","sid":"b22a38","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-30 23:29:34","sid":"b22a38","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":1276}}
+{"ts":"2026-07-30 23:29:49","sid":"b22a38","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":528}}
+{"ts":"2026-07-30 23:30:01","sid":"b22a38","ev":"task_delete","d":{"count":1}}
+{"ts":"2026-07-30 23:30:23","sid":"b22a38","ev":"task_add","d":{"via":"paste","count":5}}
+{"ts":"2026-07-30 23:30:28","sid":"b22a38","ev":"task_delete","d":{"count":1}}
+{"ts":"2026-07-30 23:30:35","sid":"b22a38","ev":"indent","d":{"count":5}}
+{"ts":"2026-07-30 23:30:52","sid":"b22a38","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":2356}}
+{"ts":"2026-07-30 23:31:03","sid":"b22a38","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":1470}}
+{"ts":"2026-07-30 23:31:20","sid":"b22a38","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":703}}
+{"ts":"2026-07-30 23:31:41","sid":"b22a38","ev":"task_delete","d":{"count":1}}
+{"ts":"2026-07-30 23:31:47","sid":"b22a38","ev":"task_add","d":{"via":"paste","count":5}}
+{"ts":"2026-07-30 23:31:54","sid":"b22a38","ev":"indent","d":{"count":5}}
+{"ts":"2026-07-30 23:32:03","sid":"b22a38","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":718}}
+{"ts":"2026-07-30 23:32:13","sid":"b22a38","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-30 23:33:02","sid":"b22a38","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":1746}}
+{"ts":"2026-07-30 23:33:38","sid":"b22a38","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":16987}}
+{"ts":"2026-07-30 23:35:13","sid":"b22a38","ev":"file_save","d":{"manual":false}}
+{"ts":"2026-07-30 23:36:51","sid":"b22a38","ev":"menu_action","d":{"name":"Save"}}
+{"ts":"2026-07-30 23:36:51","sid":"b22a38","ev":"file_save","d":{"manual":true}}
+{"ts":"2026-07-30 23:36:52","sid":"b22a38","ev":"app_end","d":{"secs":1180}}
+{"ts":"2026-07-30 23:38:12","sid":"62dd5a","ev":"app_start","d":{"version":"2026.07.08-r1"}}
+{"ts":"2026-07-30 23:38:14","sid":"62dd5a","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-30 23:38:14","sid":"62dd5a","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-30 23:38:14","sid":"62dd5a","ev":"file_open","d":{"path":"C:/Users/ccbefb/OneDrive - Hussmann Corporation/Desktop/VPM/CO-PILOT TRIALS/vpm_tracker-2/DG-PH2-6-25.vpmt","projects":2,"tasks":278}}
+{"ts":"2026-07-30 23:38:29","sid":"62dd5a","ev":"menu_action","d":{"name":"Save As\u2026"}}
+{"ts":"2026-07-30 23:38:47","sid":"62dd5a","ev":"file_save","d":{"manual":true}}
+{"ts":"2026-07-30 23:40:54","sid":"bbdf8e","ev":"app_start","d":{"version":"2026.07.08-r1"}}
+{"ts":"2026-07-30 23:40:55","sid":"bbdf8e","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-30 23:40:55","sid":"bbdf8e","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-30 23:40:55","sid":"bbdf8e","ev":"file_open","d":{"path":"C:/Users/ccbefb/OneDrive - Hussmann Corporation/Desktop/VPM-2.0/DG-PH2-6-25.vpmt","projects":2,"tasks":278}}
+{"ts":"2026-07-30 23:42:40","sid":"bbdf8e","ev":"vave_edit","d":{"col":"Potential $"}}
+{"ts":"2026-07-30 23:42:42","sid":"bbdf8e","ev":"menu_action","d":{"name":"Save"}}
+{"ts":"2026-07-30 23:42:42","sid":"bbdf8e","ev":"file_save","d":{"manual":true}}
+{"ts":"2026-07-30 23:42:50","sid":"bbdf8e","ev":"app_end","d":{"secs":116}}
+{"ts":"2026-07-30 23:42:54","sid":"62dd5a","ev":"app_end","d":{"secs":281}}
+{"ts":"2026-07-31 01:12:28","sid":"eb962c","ev":"app_start","d":{"version":"2026.07.08-r1"}}
+{"ts":"2026-07-31 01:12:30","sid":"eb962c","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-31 01:12:30","sid":"eb962c","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-31 01:12:30","sid":"eb962c","ev":"file_open","d":{"path":"C:/Users/ccbefb/OneDrive - Hussmann Corporation/Desktop/VPM-2.0/DG-PH2-6-25.vpmt","projects":2,"tasks":278}}
+{"ts":"2026-07-31 01:12:40","sid":"eb962c","ev":"task_delete","d":{"count":1}}
+{"ts":"2026-07-31 01:12:42","sid":"eb962c","ev":"task_delete","d":{"count":1}}
+{"ts":"2026-07-31 01:13:24","sid":"eb962c","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":1128}}
+{"ts":"2026-07-31 01:13:46","sid":"eb962c","ev":"dialog","d":{"name":"impact_review","outcome":"ok","ms_open":1823}}
+{"ts":"2026-07-31 01:14:19","sid":"eb962c","ev":"menu_action","d":{"name":"Save"}}
+{"ts":"2026-07-31 01:14:19","sid":"eb962c","ev":"file_save","d":{"manual":true}}
+{"ts":"2026-07-31 01:15:01","sid":"eb962c","ev":"app_end","d":{"secs":152}}
+{"ts":"2026-07-31 01:15:41","sid":"bc8bec","ev":"app_start","d":{"version":"2026.07.08-r1"}}
+{"ts":"2026-07-31 01:15:42","sid":"bc8bec","ev":"tab_switch","d":{"to":"project:0"}}
+{"ts":"2026-07-31 01:15:42","sid":"bc8bec","ev":"tab_switch","d":{"to":"project:1"}}
+{"ts":"2026-07-31 01:15:42","sid":"bc8bec","ev":"file_open","d":{"path":"C:/Users/ccbefb/OneDrive - Hussmann Corporation/Desktop/VPM-2.0/DG-PH2-6-25.vpmt","projects":2,"tasks":276}}
+{"ts":"2026-07-31 01:15:50","sid":"bc8bec","ev":"app_end","d":{"secs":9}}
