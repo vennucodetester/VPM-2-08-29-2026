@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+.venv/
+venv/
+env/
+
+usage_logs/
+Save files/
+.git-helper/logs/
+.git-helper/recovery/
+
+*.autosave
+*.tmp
+~$*
+.DS_Store
+Thumbs.db
