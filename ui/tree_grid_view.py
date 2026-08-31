@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta
 from PyQt6.QtWidgets import (QTreeWidget, QTreeWidgetItem, QHeaderView, 
                             QAbstractItemView, QMenu, QMessageBox, QStyledItemDelegate,
-                            QCalendarWidget, QDateEdit, QStyle, QStyleOptionButton, QApplication)
+                            QCalendarWidget, QDateEdit, QStyle, QStyleOptionButton,
+                            QStyleOptionViewItem, QApplication)
 from PyQt6.QtCore import (Qt, pyqtSignal, QPoint, QDate, QTimer, QRect,
                           QEvent, QItemSelectionModel)
 from PyQt6.QtGui import QAction, QColor, QBrush, QKeySequence
@@ -9,6 +10,8 @@ from PyQt6.QtGui import QAction, QColor, QBrush, QKeySequence
 from vpm_tracker_core import Columns, Colors, AppConstants, Status
 from models.task_node import TaskNode
 from ui.dialogs import BulkEditDialog, BulkPasteDialog, ImpactReviewDialog, LinkTaskDialog
+from ui.date_rule_dialog import DateRuleDialog
+from ui.inline_task_editor import InlineTaskEditor
 from ui.header_filter import FilterHeaderView
 from utils.workday_calculator import WorkdayCalculator
 from utils import usage_logger
@@ -119,6 +122,169 @@ class MoneyDelegate(QStyledItemDelegate):
     def displayText(self, value, locale):
         return money_text(value)
 
+
+class RealizedMoneyDelegate(MoneyDelegate):
+    def createEditor(self, parent, option, index):
+        tree = self.parent()
+        item = tree.itemFromIndex(index) if tree else None
+        if item and item.node.vave_stage != "Savings Verified":
+            QMessageBox.information(tree, "Savings Not Verified",
+                "Set the VAVE stage to Savings Verified before entering realized savings.")
+            return None
+        return super().createEditor(parent, option, index)
+
+
+class TaskNameDelegate(QStyledItemDelegate):
+    """Continuous row entry plus inline contextual ``=`` lookup."""
+
+    def editorEvent(self, event, model, option, index):
+        """Open an Identity Story only when the pointer is on a chip."""
+        if event.type() == QEvent.Type.MouseButtonDblClick:
+            tree = self.parent()
+            item = tree.itemFromIndex(index) if tree else None
+            if item and hasattr(item, "node"):
+                style_option = QStyleOptionViewItem(option)
+                self.initStyleOption(style_option, index)
+                text_rect = tree.style().subElementRect(
+                    QStyle.SubElement.SE_ItemViewItemText, style_option, tree)
+                cursor_x = text_rect.left()
+                click_x = event.position().toPoint().x()
+                conflicts = getattr(item.node, "resource_conflict_details", [])
+                unresolved = {value.get("resource_id") for value in conflicts
+                              if value.get("state") != "accepted"}
+                accepted = {value.get("resource_id") for value in conflicts
+                            if value.get("state") == "accepted"}
+                for token in item.node.task_tokens:
+                    marker = ("⚠ " if token.get("id") in unresolved else
+                              "✓ " if token.get("id") in accepted else "")
+                    chip = f"{marker}[{token.get('label', '')}]"
+                    width = style_option.fontMetrics.horizontalAdvance(chip)
+                    if cursor_x <= click_x <= cursor_x + width:
+                        kind = str(token.get("kind") or "identity")
+                        if (token.get("id") and token.get("label") and
+                                kind.casefold() not in
+                                {"phase", "campaign", "header"}):
+                            tree.identity_story_requested.emit(
+                                str(token["id"]), str(token["label"]), kind)
+                            return True
+                    cursor_x += width + style_option.fontMetrics.horizontalAdvance(" ")
+        return super().editorEvent(event, model, option, index)
+
+    def createEditor(self, parent, option, index):
+        tree = self.parent()
+        editor = InlineTaskEditor(tree._task_lookup_options(), parent)
+        editor.setProperty("vpm_node_id", index.data(Qt.ItemDataRole.UserRole))
+        editor.selectionCommitted.connect(self._commit_popup_selection)
+        if getattr(tree, "_open_lookup_with_editor", False):
+            tree._open_lookup_with_editor = False
+            QTimer.singleShot(0, editor.start_lookup)
+        return editor
+
+    def setEditorData(self, editor, index):
+        item = self.parent().itemFromIndex(index) if self.parent() else None
+        if item and hasattr(item, "node"):
+            tokens = list(item.node.task_tokens)
+            if not tokens:
+                from utils.resource_allocation import legacy_resource_id
+                tokens = [{"id": legacy_resource_id(kind, value), "label": value,
+                           "kind": kind, "duration": None,
+                           "header": kind.title()}
+                          for kind, value in item.node.resources.items() if value]
+            editor_name = item.node.name
+            if tokens and editor_name == tokens[0].get("label"):
+                editor_name = ""
+            editor.set_value(editor_name, tokens)
+            editor.setProperty("vpm_node_id", item.node.id)
+        else:
+            editor.setText(index.data(Qt.ItemDataRole.EditRole) or "")
+
+    def setModelData(self, editor, model, index):
+        tree = self.parent()
+        # Clicking the detached results popup causes a Windows focus-out before
+        # QListWidget.itemPressed. At that instant the lookup is active but no
+        # token has been appended yet. Treat this as an in-progress selection,
+        # never as permission to overwrite the task with an empty value.
+        if editor.lookup_active and not editor.tokens_for_commit():
+            return
+        item = tree.itemFromIndex(index) if tree else None
+        # A click in the floating lookup can make Qt invalidate the delegate's
+        # model index before it asks us to commit. The editor keeps the stable
+        # task id, so fall back to it instead of silently saving a blank cell.
+        if tree and (not item or not hasattr(item, "node")):
+            item = tree._find_item_by_id(editor.property("vpm_node_id"))
+            if item:
+                index = tree.indexFromItem(item, Columns.TREE)
+        if item and hasattr(item, "node"):
+            self._apply_task_value(
+                item, model, index, editor.tokens_for_commit(),
+                editor.plain_name())
+            return
+        super().setModelData(editor, model, index)
+
+    def _commit_popup_selection(self, payload):
+        """Commit a popup choice by task id, independent of editor lifetime."""
+        tree = self.parent()
+        if not tree or not isinstance(payload, dict):
+            return
+        item = tree._find_item_by_id(payload.get("node_id"))
+        if not item:
+            return
+        index = tree.indexFromItem(item, Columns.TREE)
+        self._apply_task_value(
+            item, tree.model(), index, payload.get("tokens") or [],
+            payload.get("name") or "")
+        QTimer.singleShot(
+            0, lambda n=item.node, old={
+                "tokens": payload.get("previous_tokens") or [],
+                "name": payload.get("previous_name") or ""}:
+            tree.resource_assignment_committed.emit(n, old))
+
+    def _apply_task_value(self, item, model, index, tokens, name):
+        tree = self.parent()
+        node = item.node
+        node.task_tokens = [dict(token) for token in tokens]
+        node.resources = {}
+        if not node.task_tokens:
+            node.template_snapshot = {}
+        duration = None
+        for token in node.task_tokens:
+            kind = (token.get("kind") or "").casefold()
+            if kind in {"room", "case", "cassette", "article", "test article"}:
+                key = ("article" if kind in
+                       {"cassette", "article", "test article"} else kind)
+                node.resources[key] = token.get("label", "")
+            if token.get("duration") not in (None, ""):
+                duration = max(1, int(token["duration"]))
+                node.template_snapshot = dict(token)
+        if duration is not None:
+            node.end_rule = {"mode": "duration", "days": duration}
+            tree.recalculate_all_dates()
+        usage_logger.log("task_inline_lookup_apply", tokens=len(node.task_tokens),
+                         duration=duration is not None)
+        name = (name or "").strip()
+        if not name:
+            primary = next((token for token in node.task_tokens
+                            if token.get("label")), None)
+            if primary:
+                name = primary.get("label", "")
+        model.setData(index, name, Qt.ItemDataRole.EditRole)
+
+    def eventFilter(self, editor, event):
+        if event.type() == QEvent.Type.KeyPress:
+            if editor.handle_lookup_key(event):
+                return True
+            tree = self.parent()
+            node_id = editor.property("vpm_node_id")
+            if event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+                self.commitData.emit(editor)
+                self.closeEditor.emit(editor, QStyledItemDelegate.EndEditHint.NoHint)
+                QTimer.singleShot(0, lambda: tree._restructure_during_fast_entry(
+                    node_id, event.key() == Qt.Key.Key_Backtab))
+                return True
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                QTimer.singleShot(0, lambda: tree._finish_fast_row(node_id))
+        return super().eventFilter(editor, event)
+
 class WaitingOnDelegate(QStyledItemDelegate):
     def createEditor(self, parent, option, index):
         from PyQt6.QtWidgets import QComboBox
@@ -162,6 +328,7 @@ class NotesDelegate(QStyledItemDelegate):
 
     def open_dialog(self, index):
         from PyQt6.QtWidgets import QDialog, QVBoxLayout, QPlainTextEdit, QDialogButtonBox
+        from PyQt6.QtGui import QShortcut, QKeySequence
         from models.task_node import TaskNode
         
         tree_view = self.parent()
@@ -173,6 +340,7 @@ class NotesDelegate(QStyledItemDelegate):
             return
             
         node = item.node
+        usage_logger.log("task_note_open", via="notes_cell")
         current_notes = node.notes
         today_tag = datetime.now().strftime("[%Y-%m-%d]: ")
         
@@ -205,6 +373,13 @@ class NotesDelegate(QStyledItemDelegate):
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
+
+        def escape_to_overall_notes():
+            dialog.setProperty("clear_task_note_context", True)
+            dialog.reject()
+
+        escape_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), dialog)
+        escape_shortcut.activated.connect(escape_to_overall_notes)
         
         cursor = text_edit.textCursor()
         cursor.setPosition(cursor_pos)
@@ -220,6 +395,9 @@ class NotesDelegate(QStyledItemDelegate):
             finally:
                 tree_view.blockSignals(was_blocked)
             tree_view.item_changed_signal.emit(node)
+        elif dialog.property("clear_task_note_context"):
+            tree_view.clearSelection()
+            usage_logger.log("task_note_escape_to_overall")
 
     def paint(self, painter, option, index):
         text = index.data()
@@ -275,7 +453,7 @@ class DelayDelegate(QStyledItemDelegate):
         slip_tag = f"+{new_slip}d" if new_slip > 0 else f"{new_slip}d"
 
         dialog = QDialog(tree_view)
-        dialog.setWindowTitle(f"Delay Log — {node.name}")
+        dialog.setWindowTitle(f"Record Real Delay — {node.name}")
         dialog.resize(460, 340)
         layout = QVBoxLayout(dialog)
 
@@ -304,7 +482,7 @@ class DelayDelegate(QStyledItemDelegate):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
                                    QDialogButtonBox.StandardButton.Cancel)
         mark_btn = QPushButton("Mark On Track")
-        set_btn = QPushButton("Set Delay to...")
+        set_btn = QPushButton("Record/Adjust Real Delay...")
         if node.children:
             mark_btn.setEnabled(False)
             set_btn.setEnabled(False)
@@ -313,7 +491,7 @@ class DelayDelegate(QStyledItemDelegate):
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         mark_btn.clicked.connect(lambda: (tree_view.mark_on_track(node), dialog.accept()))
-        set_btn.clicked.connect(lambda: (tree_view.set_delay_for_node(node), dialog.accept()))
+        set_btn.clicked.connect(lambda: (tree_view.record_real_delay(node), dialog.accept()))
         layout.addWidget(buttons)
 
         if usage_logger.timed_exec(dialog, "delay_log"):
@@ -321,12 +499,16 @@ class DelayDelegate(QStyledItemDelegate):
                 return
             reason = reason_edit.text().strip()
             if not reason:
+                usage_logger.log("warning_shown", name="delay_reason_required")
+                QMessageBox.information(tree_view, "Reason Required",
+                    "Enter a reason to record a real delay.")
                 return
             node.log_delay_revision({
                 "rev": next_rev,
                 "date": today_str,
                 "end": node.end_date or "",
                 "slip": new_slip,
+                "variance": total_diff,
                 "reason": reason,
             })
             was_blocked = tree_view.blockSignals(True)
@@ -336,9 +518,8 @@ class DelayDelegate(QStyledItemDelegate):
                 tree_view.blockSignals(was_blocked)
             tree_view.journal_event.emit(
                 f"Delay logged — '{node.name}' {slip_tag}: {reason}")
+            usage_logger.log("record_real_delay", outcome="applied")
             tree_view.item_changed_signal.emit(node)
-
-
 class TaskTreeWidgetItem(QTreeWidgetItem):
     def __init__(self, node: TaskNode):
         super().__init__()
@@ -346,21 +527,50 @@ class TaskTreeWidgetItem(QTreeWidgetItem):
         self.update_from_node()
         
     def update_from_node(self):
-        self.setText(Columns.TREE, self.node.name)
+        conflict_details = getattr(self.node, "resource_conflict_details", [])
+        unresolved_ids = {d.get("resource_id") for d in conflict_details
+                          if d.get("state") != "accepted"}
+        accepted_ids = {d.get("resource_id") for d in conflict_details
+                        if d.get("state") == "accepted"}
+        chips = []
+        for token in self.node.task_tokens:
+            marker = ("⚠ " if token.get("id") in unresolved_ids else
+                      "✓ " if token.get("id") in accepted_ids else "")
+            chips.append(f"{marker}[{token.get('label', '')}]")
+        if not chips:
+            chips = [f"[{key.title()}: {value}]"
+                     for key, value in self.node.resources.items() if value]
+        name = self.node.name
+        if (self.node.task_tokens
+                and name == self.node.task_tokens[0].get("label")):
+            name = ""
+        self.setText(Columns.TREE, " ".join(chips + [name]).strip())
+        if self.node.template_snapshot or chips:
+            template = self.node.template_snapshot.get("name", "Plain task")
+            tooltip = f"Template: {template}\n" + "\n".join(chips)
+            if self.node.schedule_conflicts:
+                tooltip += "\n\nRESOURCE CONFLICT:\n" + "\n".join(
+                    self.node.schedule_conflicts)
+            self.setToolTip(Columns.TREE, tooltip)
 
         # Parallel Toggle (Checkbox styled as Radio)
         self.setCheckState(Columns.TREE, Qt.CheckState.Checked if self.node.is_parallel else Qt.CheckState.Unchecked)
 
-        self.setData(Columns.START, Qt.ItemDataRole.DisplayRole, display_date(self.node.start_date or ""))
+        self.setData(Columns.START, Qt.ItemDataRole.DisplayRole, self._date_display("start"))
         self.setData(Columns.START, Qt.ItemDataRole.EditRole, self.node.start_date or "")
-        self.setData(Columns.END, Qt.ItemDataRole.DisplayRole, display_date(self.node.end_date or ""))
+        self.setData(Columns.END, Qt.ItemDataRole.DisplayRole, self._date_display("end"))
         self.setData(Columns.END, Qt.ItemDataRole.EditRole, self.node.end_date or "")
+        self.setToolTip(Columns.START, self._date_rule_tooltip("start"))
+        self.setToolTip(Columns.END, self._date_rule_tooltip("end"))
         self.setText(Columns.DURATION, self.node.duration)
         val_potential = self.node.vave_display_potential()
         self.setData(Columns.POTENTIAL, Qt.ItemDataRole.DisplayRole, val_potential if val_potential is not None else "")
         self.setTextAlignment(Columns.POTENTIAL, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         val_realized = self.node.vave_display_realized()
         self.setData(Columns.REALIZED, Qt.ItemDataRole.DisplayRole, val_realized if val_realized is not None else "")
+        self.setToolTip(Columns.POTENTIAL, f"VAVE stage: {self.node.vave_stage}")
+        self.setToolTip(Columns.REALIZED,
+                        f"VAVE stage: {self.node.vave_stage}. Realized savings are entered only when verified.")
         self.setTextAlignment(Columns.REALIZED, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.setText(Columns.STATUS, self.node.status)
         waiting_text = self._waiting_display()
@@ -405,14 +615,6 @@ class TaskTreeWidgetItem(QTreeWidgetItem):
 
         self.setFlags(self.flags() | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsUserCheckable)
 
-        # Visual indication for locked dates
-        if self.node.dates_locked:
-            self.setForeground(Columns.START, QBrush(Colors.GRAY))
-            self.setForeground(Columns.END, QBrush(Colors.GRAY))
-        else:
-            self.setForeground(Columns.START, QBrush(Colors.TEXT_WHITE))
-            self.setForeground(Columns.END, QBrush(Colors.TEXT_WHITE))
-
         # Status coloring: Red (overdue), Green (completed), Black (default)
         status_color = Colors.TEXT_WHITE
 
@@ -429,6 +631,12 @@ class TaskTreeWidgetItem(QTreeWidgetItem):
         # Apply status color to all columns
         for col in range(Columns.COUNT):
             self.setForeground(col, QBrush(status_color))
+
+        # Field-specific fixed dates remain visually distinct.
+        if self.node.start_rule.get("mode") == "fixed":
+            self.setForeground(Columns.START, QBrush(QColor("#FFD54F")))
+        if self.node.end_rule.get("mode") == "fixed":
+            self.setForeground(Columns.END, QBrush(QColor("#FFD54F")))
 
         if self.node.children and self.node.vave_potential is None and self.node.vave_display_potential() is not None:
             self.setForeground(Columns.POTENTIAL, QBrush(QColor("#666666")))
@@ -482,12 +690,15 @@ class TaskTreeWidgetItem(QTreeWidgetItem):
         '↑ Name'         — Radio OFF: auto-chain from previous sibling.
         ''               — first child or root with no link.
         """
-        if self.node.predecessor_id:
+        start_rule = self.node.start_rule
+        if start_rule.get("mode") in {"continue_after", "same_as"}:
             tree = self.treeWidget()
             name = None
             if tree is not None and hasattr(tree, 'resolve_node_name'):
-                name = tree.resolve_node_name(self.node.predecessor_id)
-            return f"⇦ {name}" if name else "⇦ (missing)"
+                name = tree.resolve_node_name(start_rule.get("task_id"))
+            symbol = "+" if start_rule.get("mode") == "continue_after" else "="
+            field = start_rule.get("field", "end").title()
+            return f"{symbol} {name} · {field}" if name else f"{symbol} (missing)"
 
         if self.node.dates_locked:
             return "📌 Manual date"
@@ -499,6 +710,40 @@ class TaskTreeWidgetItem(QTreeWidgetItem):
         if prev is not None:
             return f"↑ {prev.name}"
         return ""
+
+    def _date_display(self, field: str) -> str:
+        value = self.node.start_date if field == "start" else self.node.end_date
+        rule = self.node.start_rule if field == "start" else self.node.end_rule
+        marker = {"fixed": "📌", "same_as": "=", "continue_after": "+"}.get(
+            rule.get("mode"), "")
+        rendered = display_date(value or "")
+        return f"{rendered}  {marker}".rstrip()
+
+    def _date_rule_tooltip(self, field: str) -> str:
+        rule = self.node.start_rule if field == "start" else self.node.end_rule
+        mode = rule.get("mode")
+        if mode in {"same_as", "continue_after"}:
+            tree = self.treeWidget()
+            name = tree.resolve_node_name(rule.get("task_id")) if tree else ""
+            relation = "Same as" if mode == "same_as" else "Continue after"
+            explanation = f"{relation} {name or '(missing task)'} · {rule.get('field', field).title()}"
+            return self._with_schedule_explanation(explanation)
+        if mode == "automatic" and field == "start":
+            previous = self._implicit_predecessor()
+            if previous:
+                return self._with_schedule_explanation(
+                    f"Automatic: first workday after {previous.name} · End")
+            if self.node.parent:
+                return self._with_schedule_explanation(
+                    f"Automatic: {self.node.parent.name} · Start")
+        return self._with_schedule_explanation(self.node.rule_explanation(field))
+
+    def _with_schedule_explanation(self, base):
+        extra = []
+        if self.node.schedule_reason:
+            extra.append(self.node.schedule_reason)
+        extra.extend(f"CONFLICT: {text}" for text in self.node.schedule_conflicts)
+        return "\n".join([base] + extra)
 
     def _waiting_display(self) -> str:
         if not self.node.waiting_on:
@@ -586,6 +831,8 @@ class TreeGridView(QTreeWidget):
     # been consumed (promoted to a task or appended to a task's notes), so the
     # pad can drop that line.
     note_consumed = pyqtSignal(str)
+    resource_assignment_committed = pyqtSignal(object, object)
+    identity_story_requested = pyqtSignal(str, str, str)
 
     # Task clipboard for cut/copy/paste. Class-level on purpose: it is
     # shared by every project tab, which is what makes cross-project
@@ -598,10 +845,13 @@ class TreeGridView(QTreeWidget):
         self.active_filters = {} # {column: set_of_allowed_values}
         self.is_updating = False # Flag to prevent recursion
         self._zoom_factor = 1.0
+        self.resource_lists = {"case": [], "room": [], "article": []}
         
         # Linking Mode State
         self.linking_mode = False
         self.linking_source_node = None
+        self.linking_field = "start"
+        self.linking_rule_mode = "continue_after"
         
         self.setup_ui()
 
@@ -640,10 +890,11 @@ class TreeGridView(QTreeWidget):
         self.itemExpanded.connect(self.on_item_expanded)
         
         # Delegates
+        self.setItemDelegateForColumn(Columns.TREE, TaskNameDelegate(self))
         self.setItemDelegateForColumn(Columns.START, DateDelegate(self))
         self.setItemDelegateForColumn(Columns.END, DateDelegate(self))
         self.setItemDelegateForColumn(Columns.POTENTIAL, MoneyDelegate(self))
-        self.setItemDelegateForColumn(Columns.REALIZED, MoneyDelegate(self))
+        self.setItemDelegateForColumn(Columns.REALIZED, RealizedMoneyDelegate(self))
         self.setItemDelegateForColumn(Columns.STATUS, StatusDelegate(self))
         self.setItemDelegateForColumn(Columns.OWNER, WaitingOnDelegate(self))
         self.setItemDelegateForColumn(Columns.NOTES, NotesDelegate(self))
@@ -672,6 +923,7 @@ class TreeGridView(QTreeWidget):
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
 
     def set_vave_enabled(self, enabled: bool):
+        self._vave_enabled = bool(enabled)
         self.setColumnHidden(Columns.POTENTIAL, not enabled)
         self.setColumnHidden(Columns.REALIZED, not enabled)
 
@@ -729,12 +981,35 @@ class TreeGridView(QTreeWidget):
         current = self.currentItem()
         if not editing and isinstance(current, TaskTreeWidgetItem):
             key = event.key()
+            column = self.currentColumn()
+            if event.text() in ("=", "+") and column in (
+                    Columns.START, Columns.END, Columns.PREDECESSOR):
+                mode = "same_as" if event.text() == "=" else "continue_after"
+                field = "start" if column == Columns.PREDECESSOR else (
+                    "start" if column == Columns.START else "end")
+                if mode == "continue_after" and field == "end":
+                    self._show_link_hint("Continue After controls Start, not End.")
+                    return
+                self.start_date_pick_mode(current, field, mode)
+                return
+            if event.text() == "=" and column == Columns.TREE:
+                self._open_lookup_with_editor = True
+                self.editItem(current, Columns.TREE)
+                return
             if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                if column in (Columns.START, Columns.END, Columns.PREDECESSOR):
+                    field = "start" if column in (Columns.START, Columns.PREDECESSOR) else "end"
+                    self.open_date_choices(current, field)
+                    return
                 self.add_sibling_below(current)
                 return
             if key == Qt.Key.Key_Delete:
                 self._delete_with_confirm(current)
                 return
+        if (not editing and current is None
+                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)):
+            self.add_blank_root()
+            return
         super().keyPressEvent(event)
 
     def _delete_with_confirm(self, item: 'TaskTreeWidgetItem'):
@@ -754,12 +1029,11 @@ class TreeGridView(QTreeWidget):
         if box.exec() == QMessageBox.StandardButton.Yes:
             self.delete_smart(item)
 
-    def add_sibling_below(self, item: 'TaskTreeWidgetItem'):
-        """Insert a new task right below `item` at the same level and start
-        editing its name — Enter-to-add flow for fast brain-dumps."""
+    def add_sibling_below(self, item: 'TaskTreeWidgetItem', begin_edit=True):
+        """Insert a blank row so its structure can be set before typing."""
         anchor = item.node
         parent_node = anchor.parent
-        new_node = TaskNode("New Task", parent=parent_node)
+        new_node = TaskNode("", parent=parent_node)
         new_node.update_from_previous_sibling(anchor)
 
         siblings = parent_node.children if parent_node else self.root_nodes
@@ -781,10 +1055,89 @@ class TreeGridView(QTreeWidget):
         finally:
             self.blockSignals(was_blocked)
 
-        self.journal_event.emit(f"Added task '{new_node.name}'")
+        self.journal_event.emit("Added blank task row")
+        usage_logger.log("task_add", via="enter", count=1)
         self.commit_structure_change(new_node)
         self.setCurrentItem(new_item)
-        self.editItem(new_item, Columns.TREE)
+        self.setCurrentItem(new_item, Columns.TREE)
+        if begin_edit:
+            QTimer.singleShot(0, lambda: self.editItem(new_item, Columns.TREE))
+
+    def _finish_fast_row(self, node_id):
+        item = self._find_item_by_id(node_id)
+        if (not item or (not item.node.name.strip()
+                         and not item.node.task_tokens)):
+            return
+        usage_logger.log("task_row_complete", via="enter")
+        self.add_sibling_below(item)
+
+    def add_blank_root(self):
+        node = TaskNode("")
+        self.root_nodes.append(node)
+        self._baseline_new_task_on_track(node)
+        was_blocked = self.blockSignals(True)
+        try:
+            item = TaskTreeWidgetItem(node)
+            self.addTopLevelItem(item)
+        finally:
+            self.blockSignals(was_blocked)
+        self.journal_event.emit("Added blank task row")
+        usage_logger.log("task_add", via="enter_empty_grid", count=1)
+        self.commit_structure_change(node)
+        self.setCurrentItem(item, Columns.TREE)
+        QTimer.singleShot(0, lambda: self.editItem(item, Columns.TREE))
+
+    def _restructure_during_fast_entry(self, node_id, outdent=False):
+        item = self._find_item_by_id(node_id)
+        if not item:
+            return
+        if outdent:
+            self.outdent_smart(item)
+        else:
+            self.indent_smart(item)
+        QTimer.singleShot(0, lambda: self.editItem(item, Columns.TREE))
+
+    def _start_focused_task_lookup(self):
+        editor = QApplication.focusWidget()
+        if isinstance(editor, InlineTaskEditor):
+            editor.start_lookup()
+
+    def _task_lookup_options(self):
+        from utils.template_catalog import load_templates
+        options = []
+        for entry in load_templates():
+            kind = (entry.get("kind") or "activity").casefold()
+            if kind == "campaign" or entry.get("record_type") == "header":
+                continue
+            definition = getattr(self, "resource_definitions", {}).get(
+                entry.get("id"))
+            if definition is not None and not definition.active:
+                continue
+            header = entry.get("header")
+            if not header:
+                if kind == "phase":
+                    header = "Project Phases"
+                elif kind == "activity":
+                    header = "Lab Testing"
+                else:
+                    header = kind.replace("_", " ").title()
+            options.append({
+                "id": entry.get("id"), "label": entry.get("name", ""),
+                "kind": kind, "duration": entry.get("duration"),
+                "header": header,
+            })
+        labels = {"room": "Rooms", "case": "Cases", "article": "Cassettes / Test Articles"}
+        from utils.resource_allocation import legacy_resource_id
+        for kind, values in self.resource_lists.items():
+            for value in values:
+                resource_id = legacy_resource_id(kind, value)
+                definition = getattr(self, "resource_definitions", {}).get(resource_id)
+                if definition is not None and not definition.active:
+                    continue
+                options.append({"id": resource_id, "label": value,
+                                "kind": kind, "duration": None,
+                                "header": labels.get(kind, kind.title())})
+        return options
 
     def _baseline_new_task_on_track(self, node: TaskNode):
         """Newly inserted planning rows are not delays by themselves."""
@@ -879,12 +1232,20 @@ class TreeGridView(QTreeWidget):
 
     def start_linking_mode(self, source_item: TaskTreeWidgetItem):
         """Enter click-to-link mode. No modal popup — cursor + status bar hint only."""
+        self.start_date_pick_mode(source_item, "start", "continue_after")
+
+    def start_date_pick_mode(self, source_item, field, mode):
         self.linking_mode = True
         self.linking_source_node = source_item.node
+        self.linking_field = field
+        self.linking_rule_mode = mode
         self.setCursor(Qt.CursorShape.CrossCursor)
+        usage_logger.log("date_rule_open", field=field, shortcut=mode,
+                         interaction="direct_grid_pick")
+        relation = "same date as" if mode == "same_as" else "continue after"
         self._show_link_hint(
-            f"Linking '{source_item.node.name}': click a task to set as predecessor. "
-            f"Click the same task to clear. Esc or right-click to cancel."
+            f"{field.title()} for '{source_item.node.name}': click a task to {relation}. "
+            f"Click the same task to return to automatic. Esc or right-click cancels."
         )
 
     def _show_link_hint(self, msg: str):
@@ -898,8 +1259,13 @@ class TreeGridView(QTreeWidget):
                 pass
 
     def _cancel_linking_mode(self):
+        if self.linking_mode:
+            usage_logger.log("date_rule_apply", outcome="canceled",
+                             interaction="direct_grid_pick")
         self.linking_mode = False
         self.linking_source_node = None
+        self.linking_field = "start"
+        self.linking_rule_mode = "continue_after"
         self.setCursor(Qt.CursorShape.ArrowCursor)
         self._show_link_hint("Linking cancelled.")
 
@@ -918,13 +1284,18 @@ class TreeGridView(QTreeWidget):
             target_node = item.node
             source_node = self.linking_source_node
 
-            # Clicking the source row again clears the predecessor (toggle-off).
+            source_item = self._find_item_by_id(source_node.id)
+            field = self.linking_field
+            mode = self.linking_rule_mode
+            # Clicking the source row again clears the rule (toggle-off).
             if target_node.id == source_node.id:
-                self._apply_predecessor_change(source_node, None)
+                automatic = ({"mode": "automatic"} if field == "start"
+                             else {"mode": "duration", "days": max(1, int(source_node.duration))})
+                self._apply_date_rule(source_item, field, automatic)
                 self.linking_mode = False
                 self.linking_source_node = None
                 self.setCursor(Qt.CursorShape.ArrowCursor)
-                self._show_link_hint(f"Cleared predecessor on '{source_node.name}'.")
+                self._show_link_hint(f"Returned {field} to automatic on '{source_node.name}'.")
                 return
 
             # Reject cycles: target cannot be a descendant or ancestor of source.
@@ -938,11 +1309,18 @@ class TreeGridView(QTreeWidget):
                     return
                 ancestor = ancestor.parent
 
-            self._apply_predecessor_change(source_node, target_node.id)
+            rule = {
+                "mode": mode, "task_id": target_node.id,
+                "field": field if mode == "same_as" else "end",
+                "offset": 0, "offset_unit": "workdays",
+            }
+            if not self._apply_date_rule(source_item, field, rule):
+                return
             self.linking_mode = False
             self.linking_source_node = None
             self.setCursor(Qt.CursorShape.ArrowCursor)
-            self._show_link_hint(f"Linked '{source_node.name}' ⇦ '{target_node.name}'.")
+            symbol = "=" if mode == "same_as" else "+"
+            self._show_link_hint(f"{source_node.name} {symbol} {target_node.name} applied.")
             return
 
         super().mousePressEvent(event)
@@ -955,8 +1333,11 @@ class TreeGridView(QTreeWidget):
         item = self.itemAt(event.position().toPoint())
         if isinstance(item, TaskTreeWidgetItem):
             col = self.columnAt(int(event.position().x()))
-            if col == Columns.PREDECESSOR:
-                self.jump_to_predecessor(item)
+            if col in (Columns.START, Columns.END, Columns.PREDECESSOR):
+                field = "start" if col in (Columns.START, Columns.PREDECESSOR) else "end"
+                self.open_date_choices(
+                    item, field, self.viewport().mapToGlobal(
+                        self.visualItemRect(item).bottomLeft()))
                 return
         super().mouseDoubleClickEvent(event)
 
@@ -980,8 +1361,8 @@ class TreeGridView(QTreeWidget):
         # (refresh_entire_tree blocks signals internally — no popups during load.)
         self.refresh_entire_tree()
 
-        # Force full recalculation to apply new logic (e.g. Next-Day Sequencing) to old files
-        self.recalculate_all_dates()
+        # Do not reschedule during load. Migration must preserve every displayed
+        # date until the user deliberately edits or refreshes the schedule.
 
     def add_node_to_tree(self, node: TaskNode, parent_item: QTreeWidgetItem):
         item = TaskTreeWidgetItem(node)
@@ -1087,6 +1468,8 @@ class TreeGridView(QTreeWidget):
 
     def open_context_menu(self, position: QPoint):
         item = self.itemAt(position)
+        usage_logger.log("menu_open", menu="task_context",
+                         depth=0, on_row=bool(item))
         
         # Fallback: If clicked on empty space but have selection, use selection
         if not item and self.selectedItems():
@@ -1126,6 +1509,25 @@ class TreeGridView(QTreeWidget):
                 wait_action = QAction("Mark Waiting On...", self)
                 wait_action.triggered.connect(lambda: self.mark_waiting_on(item.node))
                 menu.addAction(wait_action)
+
+            owner_action = QAction(
+                "Change Owner..." if item.node.owner else "Assign Owner...", self)
+            owner_action.triggered.connect(lambda: self.assign_owner(item.node))
+            menu.addAction(owner_action)
+
+            resource_tokens = item.node.resource_tokens()
+            if resource_tokens:
+                usage_action = QAction("Show Resource Usage…", self)
+                usage_action.triggered.connect(
+                    lambda checked=False, resource_id=resource_tokens[0].get("id"):
+                    getattr(self.window(), "show_resource_usage")(resource_id))
+                menu.addAction(usage_action)
+
+            if getattr(self, "_vave_enabled", False):
+                vave_action = QAction(
+                    f"VAVE Stage: {item.node.vave_stage}...", self)
+                vave_action.triggered.connect(lambda: self.set_vave_stage(item))
+                menu.addAction(vave_action)
 
             menu.addSeparator()
 
@@ -1191,9 +1593,9 @@ class TreeGridView(QTreeWidget):
             mark_track_action.setEnabled(item.node.baseline_duration is not None and not item.node.children)
             mark_track_action.triggered.connect(lambda: self.mark_on_track(item.node))
             dates_menu.addAction(mark_track_action)
-            set_delay_action = QAction("Set Delay to...", self)
+            set_delay_action = QAction("Record Real Delay...", self)
             set_delay_action.setEnabled(item.node.baseline_duration is not None and not item.node.children)
-            set_delay_action.triggered.connect(lambda: self.set_delay_for_node(item.node))
+            set_delay_action.triggered.connect(lambda: self.record_real_delay(item.node))
             dates_menu.addAction(set_delay_action)
 
             menu.addSeparator()
@@ -1212,11 +1614,21 @@ class TreeGridView(QTreeWidget):
             paste_root_action.triggered.connect(lambda: self.paste_tasks(None))
             menu.addAction(paste_root_action)
             
-        menu.exec(self.viewport().mapToGlobal(position))
+        chosen = menu.exec(self.viewport().mapToGlobal(position))
+        if chosen is not None:
+            depth = 0
+            for obj in chosen.associatedObjects():
+                if isinstance(obj, QMenu):
+                    current = obj
+                    candidate_depth = 0
+                    while isinstance(current.parentWidget(), QMenu):
+                        candidate_depth += 1
+                        current = current.parentWidget()
+                    depth = max(depth, candidate_depth)
+            usage_logger.log("context_menu_action", depth=depth)
 
     def _simulate_impact(self, node, new_start=None, new_end=None):
-        """Non-destructively compute the effect of changing `node`'s start OR
-        end date. Pass exactly one of new_start / new_end.
+        """Non-destructively compute the effect of changing a task date/span.
 
         Clones the whole project, applies the change, re-runs the REAL
         scheduler, and diffs against the current state. Because it uses the
@@ -1268,7 +1680,10 @@ class TreeGridView(QTreeWidget):
         # Apply the hypothetical change to the clone and pin it so the
         # scheduler keeps it (an inline-editable date is always user-owned).
         if new_start is not None:
-            if target.start_date and target.end_date:
+            if new_end is not None:
+                target.start_date = new_start
+                target.end_date = new_end
+            elif target.start_date and target.end_date:
                 dur = WorkdayCalculator.calculate_duration(
                     target.start_date, target.end_date)
                 target.start_date = new_start
@@ -1333,52 +1748,32 @@ class TreeGridView(QTreeWidget):
             if delay_slip > 0:
                 delay_rev = chr(ord('B') + len(node.revisions))
 
+        project_delta = (_cal_delta(project_end_old, project_end_new)
+                         if project_end_old and project_end_new else 0)
+        # Routine edits apply immediately. Review is reserved for a real
+        # downstream shift or a changed project finish.
+        if not impacts and project_delta == 0:
+            return None
         return {
             'task_name': node.name,
             'change_desc': change_desc,
             'project_end_old': project_end_old,
             'project_end_new': project_end_new,
-            'project_delta': (_cal_delta(project_end_old, project_end_new)
-                              if project_end_old and project_end_new else 0),
+            'project_delta': project_delta,
             'impacts': impacts,
             'delay_slip': delay_slip,
             'delay_rev': delay_rev,
             'node_new_end': node_new_end,
         }
 
-    def _log_delay_from_review(self, node, item, review, dialog, journal_lines):
-        """Record a delay revision when the just-applied edit slipped past the
-        baseline. Shared by the End and Duration handlers so both behave
-        identically (mirrors DelayDelegate's revision shape)."""
-        if review.get('delay_slip', 0) <= 0:
-            return
-        from datetime import datetime as _dt
-        node.log_delay_revision({
-            "rev": review.get('delay_rev', '?'),
-            "date": _dt.now().strftime("%Y-%m-%d"),
-            "end": review.get('node_new_end', node.end_date or ""),
-            "slip": review.get('delay_slip', 0),
-            "reason": dialog.delay_reason or "",
-        })
-        item.update_from_node()
-        journal_lines.append(
-            f"Delay logged — '{node.name}' +{review.get('delay_slip', 0)}d: "
-            f"{dialog.delay_reason or '(no reason given)'}")
-
     def editItem(self, item: QTreeWidgetItem, column: int = 0):
         if not isinstance(item, TaskTreeWidgetItem):
             super().editItem(item, column)
             return
 
-        # Predecessor column: enter inline linking mode. No free-text edit, no popup.
-        if column == Columns.PREDECESSOR:
-            self.start_linking_mode(item)
-            return
-
-        # Block auto-scheduled start dates. _start_is_auto returns False when
-        # dates_locked=True, so "Set Manual Date" tasks bypass this block and
-        # become editable. END is never blocked — it always controls duration.
-        if column == Columns.START and self._start_is_auto(item.node):
+        if column in (Columns.START, Columns.END, Columns.PREDECESSOR):
+            field = "start" if column in (Columns.START, Columns.PREDECESSOR) else "end"
+            self.open_date_choices(item, field)
             return
 
         # Delay column is read-only (auto-calculated from baseline)
@@ -1386,6 +1781,165 @@ class TreeGridView(QTreeWidget):
             return
 
         super().editItem(item, column)
+
+    def _rule_creates_cycle(self, node: TaskNode, rule: dict) -> bool:
+        target_id = rule.get("task_id")
+        if not target_id:
+            return rule.get("mode") in {"same_as", "continue_after"}
+        if target_id == node.id:
+            return True
+        # Parent-start equality is the supported legacy parallel relationship.
+        if (node.parent and target_id == node.parent.id
+                and rule.get("mode") == "same_as" and rule.get("field") == "start"):
+            return False
+        node_map = self._get_node_map()
+        seen = set()
+        pending = [target_id]
+        while pending:
+            current_id = pending.pop()
+            if current_id == node.id:
+                return True
+            if current_id in seen:
+                continue
+            seen.add(current_id)
+            current = node_map.get(current_id)
+            if current is None:
+                continue
+            for candidate in (current.start_rule, current.end_rule):
+                if candidate.get("mode") in {"same_as", "continue_after"}:
+                    pending.append(candidate.get("task_id"))
+        return False
+
+    def open_date_rule_dialog(self, item: TaskTreeWidgetItem, field="start",
+                              initial_mode=None):
+        node = item.node
+        usage_logger.log("date_rule_open", field=field,
+                         shortcut=initial_mode or "click")
+        dialog = DateRuleDialog(node, self.get_all_nodes_flat(), field,
+                                initial_mode, self)
+        if not usage_logger.timed_exec(dialog, f"{field}_rule"):
+            return
+        rule = dialog.result_rule()
+        self._apply_date_rule(item, field, rule)
+
+    def _date_choice_menu(self, item, field):
+        menu = QMenu(self)
+        fixed = menu.addAction("Calendar / Fixed Date...")
+        same = menu.addAction("Same As (=) — click a task row")
+        after = menu.addAction("Continue After (+) — click a task row")
+        after.setEnabled(field == "start")
+        automatic = menu.addAction("Automatic")
+        menu.addSeparator()
+        advanced = menu.addAction("More options / offset...")
+        fixed.triggered.connect(
+            lambda: self.open_date_rule_dialog(item, field, "fixed"))
+        same.triggered.connect(
+            lambda: self.start_date_pick_mode(item, field, "same_as"))
+        after.triggered.connect(
+            lambda: self.start_date_pick_mode(item, field, "continue_after"))
+        automatic.triggered.connect(lambda: self._apply_date_rule(
+            item, field,
+            {"mode": "automatic"} if field == "start" else
+            {"mode": "duration", "days": max(1, int(item.node.duration))}))
+        advanced.triggered.connect(lambda: self.open_date_rule_dialog(item, field))
+        return menu
+
+    def open_date_choices(self, item, field, global_pos=None):
+        """Small cell-anchored menu: symbols are optional, never required."""
+        usage_logger.log("date_choice_menu", field=field, outcome="opened")
+        menu = self._date_choice_menu(item, field)
+        if global_pos is None:
+            rect = self.visualItemRect(item)
+            column = self.currentColumn()
+            if column not in (Columns.START, Columns.END, Columns.PREDECESSOR):
+                column = Columns.START if field == "start" else Columns.END
+            global_pos = self.viewport().mapToGlobal(
+                QPoint(self.columnViewportPosition(column), rect.bottom()))
+        selected = menu.exec(global_pos)
+        if selected is None:
+            usage_logger.log("date_choice_menu", field=field, outcome="canceled")
+
+    def _apply_date_rule(self, item, field, rule):
+        if not isinstance(item, TaskTreeWidgetItem):
+            return False
+        node = item.node
+        if self._rule_creates_cycle(node, rule):
+            usage_logger.log("warning_shown", name="relationship_cycle")
+            QMessageBox.warning(self, "Invalid Relationship",
+                                "Select a task that does not create a scheduling cycle.")
+            return False
+        old_rule = dict(node.start_rule if field == "start" else node.end_rule)
+        old_mode = old_rule.get("mode")
+        new_mode = rule.get("mode")
+        if (old_mode not in {"automatic", "duration", None}
+                and new_mode != old_mode):
+            usage_logger.log("date_rule_conflict", field=field,
+                             old=old_mode, new=new_mode)
+            if QMessageBox.question(
+                    self, "Replace Scheduling Rule?",
+                    f"This {field.title()} is controlled by {old_mode.replace('_', ' ')}.\n\n"
+                    f"Replace it with {new_mode.replace('_', ' ')}?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            ) != QMessageBox.StandardButton.Yes:
+                usage_logger.log("date_rule_apply", field=field,
+                                 mode=new_mode, outcome="conflict_canceled")
+                return False
+        if field == "start":
+            node.set_start_rule(rule)
+            node.is_parallel = bool(
+                rule.get("mode") == "same_as" and node.parent
+                and rule.get("task_id") == node.parent.id
+                and rule.get("field") == "start")
+        else:
+            node.set_end_rule(rule)
+        self.recalculate_all_dates()
+        self.refresh_entire_tree()
+        if node.schedule_conflicts:
+            usage_logger.log("resource_conflict", via="date_rule")
+            QMessageBox.warning(
+                self, "Resource Conflict",
+                "The exact/fixed date was kept, but its resource is not available:\n\n"
+                + "\n".join(node.schedule_conflicts))
+        if node.baseline_provisional:
+            self._restamp_provisional_baseline(node)
+        usage_logger.log("date_rule_apply", field=field, mode=rule.get("mode"),
+                         replaced=old_rule.get("mode"))
+        self.journal_event.emit(
+            f"'{node.name}': {field} rule → {node.rule_explanation(field)}")
+        self.item_changed_signal.emit(node)
+        return True
+
+    def set_vave_stage(self, item):
+        from PyQt6.QtWidgets import QInputDialog
+        stages = ["Idea", "Testing", "Approved", "Implemented", "Savings Verified"]
+        node = item.node
+        selected, ok = QInputDialog.getItem(
+            self, "VAVE Stage", "Stage:", stages,
+            max(0, stages.index(node.vave_stage) if node.vave_stage in stages else 0), False)
+        if not ok:
+            usage_logger.log("vave_stage", outcome="canceled")
+            return
+        realized = node.vave_realized
+        disposition = node.savings_disposition
+        if selected == "Savings Verified":
+            realized, ok = QInputDialog.getDouble(
+                self, "Verified Savings", "Realized savings ($):",
+                float(realized or 0), -1_000_000_000, 1_000_000_000, 2)
+            if not ok:
+                return
+            disposition, ok = QInputDialog.getItem(
+                self, "Savings Disposition", "Disposition:",
+                ["Verified", "No Savings", "Deferred"], 0, False)
+            if not ok:
+                return
+        node.vave_stage = selected
+        if selected == "Savings Verified":
+            node.vave_realized = float(realized)
+            node.savings_disposition = disposition
+        self.refresh_entire_tree()
+        usage_logger.log("vave_stage", outcome="applied", stage=selected)
+        self.journal_event.emit(f"VAVE stage set to {selected} for '{node.name}'")
+        self.item_changed_signal.emit(node)
 
     def jump_to_predecessor(self, item: TaskTreeWidgetItem):
         """Select, expand ancestors of, scroll to, and briefly flash the
@@ -1634,6 +2188,24 @@ class TreeGridView(QTreeWidget):
         self.item_changed_signal.emit(node)
         usage_logger.log("waiting_set")
 
+    def assign_owner(self, node: TaskNode):
+        from PyQt6.QtWidgets import QInputDialog
+        from utils.config_manager import ConfigManager
+        choices = [""] + [name for name in ConfigManager().get_owners() if name]
+        current = choices.index(node.owner) if node.owner in choices else 0
+        owner, ok = QInputDialog.getItem(
+            self, "Task Owner", "Owner (blank clears):", choices, current, True)
+        if not ok:
+            usage_logger.log("owner_edit", outcome="canceled")
+            return
+        old = node.owner
+        node.set_owner(owner.strip())
+        self.refresh_entire_tree()
+        self.journal_event.emit(
+            f"'{node.name}': owner {old or '—'} → {node.owner or '—'}")
+        self.item_changed_signal.emit(node)
+        usage_logger.log("owner_edit", outcome="applied", assigned=bool(node.owner))
+
     def clear_waiting(self, node: TaskNode):
         who = node.waiting_on
         days = self._waiting_days(node)
@@ -1826,7 +2398,7 @@ class TreeGridView(QTreeWidget):
             f"Marked on track — '{node.name}' (was {old_diff:+d}d): {reason or '(no reason given)'}")
         self.item_changed_signal.emit(node)
 
-    def set_delay_for_node(self, node: TaskNode):
+    def record_real_delay(self, node: TaskNode):
         if node.baseline_duration is None:
             usage_logger.log("warning_shown", name="no_baseline")
             QMessageBox.information(self, "No Baseline", "Set a baseline for this task first.")
@@ -1835,22 +2407,30 @@ class TreeGridView(QTreeWidget):
             usage_logger.log("warning_shown", name="delay_parent_task")
             QMessageBox.information(self, "Parent Task", "Delay actions are available on leaf tasks only.")
             return
-        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QSpinBox, QLineEdit, QDialogButtonBox
+        from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout,
+                                     QLineEdit, QDialogButtonBox, QLabel)
         try:
             current_duration = int(node.duration)
-            old_diff = current_duration - node.baseline_duration
+            variance = current_duration - node.baseline_duration
         except (ValueError, TypeError):
             return
+        uncovered = variance - node.logged_slip()
+        if variance <= 0 or uncovered <= 0:
+            usage_logger.log("record_real_delay", outcome="not_positive")
+            QMessageBox.information(
+                self, "No Unrecorded Delay",
+                "This task has no unrecorded positive variance. Use Still on track "
+                "or Update Baseline instead.")
+            return
         dialog = QDialog(self)
-        dialog.setWindowTitle(f"Set Delay — {node.name}")
+        dialog.setWindowTitle(f"Record Real Delay — {node.name}")
         layout = QVBoxLayout(dialog)
         form = QFormLayout()
-        delay_spin = QSpinBox()
-        delay_spin.setRange(-999, 999)
-        delay_spin.setValue(old_diff)
         reason_edit = QLineEdit()
         reason_edit.setPlaceholderText("Reason required")
-        form.addRow("Target delay (days):", delay_spin)
+        form.addRow("Current variance:", QLabel(f"+{variance} workday(s) vs baseline"))
+        if node.logged_slip():
+            form.addRow("Unrecorded amount:", QLabel(f"+{uncovered} workday(s)"))
         form.addRow("Reason:", reason_edit)
         layout.addLayout(form)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -1858,46 +2438,26 @@ class TreeGridView(QTreeWidget):
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
         reason_edit.setFocus()
-        if not usage_logger.timed_exec(dialog, "set_delay"):
+        if not usage_logger.timed_exec(dialog, "record_real_delay"):
             return
         reason = reason_edit.text().strip()
         if not reason:
             usage_logger.log("warning_shown", name="delay_reason_required")
-            QMessageBox.information(self, "Reason Required", "Enter a reason before setting the delay.")
+            QMessageBox.information(self, "Reason Required", "Enter a reason to record a real delay.")
             return
-        target = delay_spin.value()
-        node.baseline_duration = current_duration - target
-        node.baseline_end = node.end_date
         node.log_delay_revision({
             "rev": chr(ord('B') + len(node.revisions)),
             "date": datetime.now().strftime("%Y-%m-%d"),
             "end": node.end_date or "",
-            "slip": target - old_diff,
+            "slip": uncovered,
+            "variance": variance,
             "reason": reason,
         })
         self.refresh_entire_tree()
+        usage_logger.log("record_real_delay", outcome="applied")
         self.journal_event.emit(
-            f"Delay adjusted — '{node.name}' {old_diff:+d}d → {target:+d}d: {reason}")
+            f"Real delay recorded — '{node.name}' +{variance}d vs baseline: {reason}")
         self.item_changed_signal.emit(node)
-
-    def _prompt_delay_reason_if_needed(self, node: TaskNode):
-        """After a duration change, auto-open the delay log dialog if there is
-        slip not yet covered by a recorded revision."""
-        if node.baseline_duration is None or node.children:
-            return  # no baseline, or parent (rollup — children carry the log)
-        try:
-            diff = int(node.duration) - node.baseline_duration
-        except (ValueError, TypeError):
-            return
-        if diff - node.logged_slip() <= 0:
-            return
-        # Find the tree item and open the delay dialog
-        item = self._find_item_by_id(node.id)
-        if item:
-            delay_delegate = self.itemDelegateForColumn(Columns.DELAY)
-            if hasattr(delay_delegate, '_open_dialog'):
-                idx = self.indexFromItem(item, Columns.DELAY)
-                delay_delegate._open_dialog(idx)
 
     def add_child_task(self, parent_item: QTreeWidgetItem = None):
         # If no parent selected, add to root
@@ -2234,10 +2794,8 @@ class TreeGridView(QTreeWidget):
                     self._restamp_provisional_baseline(node)
                     review = None
                 else:
-                    # End date is always editable — it controls duration, not the
-                    # start anchor. Show the COMBINED popup: impact + final-date
-                    # headline, plus the delay-reason box when this push slips past
-                    # the baseline. One OK reviews, applies, and logs the delay.
+                    # End-date replanning reviews schedule impact only. Recording
+                    # a real delay is a separate, deliberate action.
                     review = self._simulate_impact(node, new_end=text)
                 if review is not None:
                     dialog = ImpactReviewDialog(review, self)
@@ -2246,8 +2804,7 @@ class TreeGridView(QTreeWidget):
                         self.validate_child_dates(item)
                         self.recalculate_all_dates()
                         self.refresh_entire_tree()
-                        self._log_delay_from_review(
-                            node, item, review, dialog, journal_lines)
+                        usage_logger.log("schedule_edit", field="end", outcome="applied")
                     else:
                         # Cancel: revert the typed end date.
                         item.setText(Columns.END, node.end_date or "")
@@ -2287,9 +2844,8 @@ class TreeGridView(QTreeWidget):
             elif column == Columns.NOTES: node.notes = text
             elif column == Columns.DELAY: pass  # read-only, skip
             elif column == Columns.DURATION:
-                # A duration change is just an end-date move, so it gets the
-                # SAME combined popup as an End edit (impact + final-date
-                # headline + delay reason). The handler tail re-normalizes the
+                # A duration change is normal replanning and gets an impact
+                # review only. The handler tail re-normalizes the
                 # Duration cell, so cancels/invalid input need no manual revert.
                 try:
                     days = int(text)
@@ -2316,8 +2872,14 @@ class TreeGridView(QTreeWidget):
                             self.validate_child_dates(item)
                             self.recalculate_all_dates()
                             self.refresh_entire_tree()
-                            self._log_delay_from_review(
-                                node, item, review, dialog, journal_lines)
+                            usage_logger.log("schedule_edit", field="duration", outcome="applied")
+                    else:
+                        node.set_duration(days)
+                        self.validate_child_dates(item)
+                        self.recalculate_all_dates()
+                        self.refresh_entire_tree()
+                        usage_logger.log("schedule_edit", field="duration",
+                                         outcome="applied_no_review")
             
             # Refresh duration (it's calculated)
             item.setText(Columns.DURATION, node.duration)
@@ -2329,12 +2891,15 @@ class TreeGridView(QTreeWidget):
 
             # Journal the edited node's own field changes (one line each)
             if old_vals[0] != node.start_date:
+                usage_logger.log("schedule_edit", field="start", outcome="applied")
                 journal_lines.append(
                     f"'{node.name}': start {old_vals[0] or '—'} → {node.start_date}")
             if old_vals[1] != node.end_date:
+                usage_logger.log("schedule_edit", field="end", outcome="applied")
                 journal_lines.append(
                     f"'{node.name}': end {old_vals[1] or '—'} → {node.end_date}")
             if old_vals[2] != node.status:
+                usage_logger.log("status_edit", outcome="applied")
                 journal_lines.append(f"'{node.name}': status → {node.status}")
             if old_vals[4] != node.waiting_on:
                 if node.waiting_on:
@@ -2344,6 +2909,8 @@ class TreeGridView(QTreeWidget):
                 else:
                     journal_lines.append(f"'{node.name}': cleared waiting on {old_vals[4]}")
                     usage_logger.log("waiting_clear", days_waited=0)
+            if column == Columns.TREE and journal_lines:
+                usage_logger.log("task_name_edit", outcome="applied")
             for line in journal_lines:
                 self.journal_event.emit(line)
 

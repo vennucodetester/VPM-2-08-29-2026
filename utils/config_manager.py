@@ -14,7 +14,14 @@ initial values for every new project.
 import json
 import os
 
-CONFIG_FILE = "vpm_config.json"
+_CONFIG_DIR = os.path.join(
+    os.environ.get("LOCALAPPDATA", os.path.join(os.path.expanduser("~"), ".vpm_tracker")),
+    "VPMTracker")
+CONFIG_FILE = os.path.join(_CONFIG_DIR, "vpm_config.json")
+LEGACY_CONFIG_FILES = [
+    os.path.join(os.getcwd(), "vpm_config.json"),
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "vpm_config.json")),
+]
 
 
 class _ProjectConfig:
@@ -52,9 +59,11 @@ class ConfigManager:
         owners = ["Unassigned", "Me"]
         holidays = []
         exclude_weekends = True
-        if os.path.exists(CONFIG_FILE):
+        source = CONFIG_FILE if os.path.exists(CONFIG_FILE) else next(
+            (path for path in LEGACY_CONFIG_FILES if os.path.exists(path)), None)
+        if source:
             try:
-                with open(CONFIG_FILE, "r") as f:
+                with open(source, "r") as f:
                     data = json.load(f)
                     owners = data.get("owners", owners)
                     holidays = data.get("holidays", holidays)
@@ -66,6 +75,8 @@ class ConfigManager:
             owners=owners, holidays=holidays, exclude_weekends=exclude_weekends
         )
         ConfigManager._active_id = "__default__"
+        if source and source != CONFIG_FILE:
+            self._save_disk_defaults()
 
     def _save_disk_defaults(self):
         """Only the __default__ profile is persisted to vpm_config.json.
@@ -74,6 +85,7 @@ class ConfigManager:
         if cfg is None:
             return
         try:
+            os.makedirs(_CONFIG_DIR, exist_ok=True)
             with open(CONFIG_FILE, "w") as f:
                 json.dump(cfg.snapshot(), f, indent=4)
         except Exception:
@@ -86,8 +98,13 @@ class ConfigManager:
         ConfigManager()
         md = metadata or {}
         base = cls._projects["__default__"].snapshot()
+        loaded_owners = md.get("owners")
+        defaultish = not loaded_owners or set(loaded_owners) <= {"", "Unassigned", "Me"}
+        base_owners = [owner for owner in base.get("owners", []) if str(owner).strip()]
+        if defaultish and set(base_owners) - {"Unassigned", "Me"}:
+            loaded_owners = base_owners
         merged = {
-            "owners": md["owners"] if "owners" in md else base.get("owners"),
+            "owners": loaded_owners if loaded_owners else base.get("owners"),
             "holidays": md["holidays"] if "holidays" in md else base.get("holidays"),
             "exclude_weekends": (
                 md["exclude_weekends"] if "exclude_weekends" in md

@@ -7,12 +7,14 @@ venv/
 env/
 
 usage_logs/
+usage-*.jsonl
 Save files/
 .git-helper/logs/
 .git-helper/recovery/
 
 *.autosave
 *.tmp
+*.lock
 ~$*
 .DS_Store
 Thumbs.db

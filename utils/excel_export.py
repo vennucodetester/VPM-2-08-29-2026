@@ -482,7 +482,8 @@ def _write_vave_slide_pack(wb, project_name: str, roots: List[TaskNode],
                 Font, PatternFill, Alignment)
 
 
-def export_projects(projects: List[Dict], filename: str):
+def export_projects(projects: List[Dict], filename: str,
+                    resource_definitions=None, conflict_resolutions=None):
     """
     Write every project to a single workbook.
 
@@ -569,6 +570,63 @@ def export_projects(projects: List[Dict], filename: str):
         if proj.get("is_vave"):
             _write_vave_slide_pack(
                 wb, name, roots, used_names, Font, PatternFill, Alignment)
+
+    # One document-wide analyzer feeds both in-app views and these sheets.
+    from utils.resource_allocation import analyze_projects
+    resource_result = analyze_projects(
+        projects, resource_definitions or [], conflict_resolutions or [],
+        attach=False)
+    if resource_result.assignments:
+        usage_ws = wb.create_sheet(_unique_sheet_name(
+            "Resource Usage", used_names))
+        usage_headers = [
+            "Resource", "Type", "Project", "Task Path", "Location", "Start",
+            "End", "Workdays", "Status", "Conflict", "Resolution"]
+        usage_ws.append(usage_headers)
+        for cell in usage_ws[1]:
+            cell.font, cell.fill = header_font, header_fill
+        conflicts_by_assignment = {}
+        for conflict in resource_result.conflicts:
+            for assignment_id in conflict.assignment_ids:
+                conflicts_by_assignment.setdefault(assignment_id, []).append(conflict)
+        for assignment in resource_result.assignments:
+            related = conflicts_by_assignment.get(assignment.id, [])
+            usage_ws.append([
+                assignment.resource_label, assignment.resource_type,
+                assignment.project_name, assignment.task_path,
+                assignment.location_label, assignment.start_date,
+                assignment.end_date, assignment.workdays, assignment.status,
+                "; ".join(f"{c.overlap_workdays}d {c.overlap_start}–{c.overlap_end}"
+                          for c in related),
+                "; ".join(c.resolution_state for c in related),
+            ])
+        usage_ws.freeze_panes = "A2"
+        for index, width in enumerate((22, 16, 22, 45, 24, 12, 12, 10, 16, 30, 15), 1):
+            usage_ws.column_dimensions[usage_ws.cell(1, index).column_letter].width = width
+
+        conflict_ws = wb.create_sheet(_unique_sheet_name(
+            "Resource Conflicts", used_names))
+        conflict_headers = [
+            "Conflict ID", "Resource", "Type", "Tasks", "Projects",
+            "Overlap Start", "Overlap End", "Workdays", "Locations",
+            "Capacity", "Peak Usage", "Resolution", "Reason"]
+        conflict_ws.append(conflict_headers)
+        for cell in conflict_ws[1]:
+            cell.font, cell.fill = header_font, header_fill
+        assignment_by_id = {a.id: a for a in resource_result.assignments}
+        for conflict in resource_result.conflicts:
+            conflict_ws.append([
+                conflict.id, conflict.resource_label, conflict.resource_type,
+                "; ".join(assignment_by_id[value].task_path
+                          for value in conflict.assignment_ids),
+                "; ".join(assignment_by_id[value].project_name
+                          for value in conflict.assignment_ids),
+                conflict.overlap_start, conflict.overlap_end,
+                conflict.overlap_workdays, "; ".join(conflict.locations),
+                conflict.capacity, conflict.peak_usage,
+                conflict.resolution_state, conflict.resolution_reason,
+            ])
+        conflict_ws.freeze_panes = "A2"
 
     if not wb.sheetnames:
         # Pathological: zero projects — leave a stub so the file opens cleanly.

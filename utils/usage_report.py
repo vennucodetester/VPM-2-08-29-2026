@@ -4,6 +4,7 @@ import sys
 from collections import Counter, defaultdict
 from datetime import datetime
 from statistics import mean, median
+from utils.usage_logger import usage
 
 
 KNOWN_FEATURES = [
@@ -15,7 +16,7 @@ KNOWN_FEATURES = [
 
 
 def _read_events(months: int):
-    root = os.path.abspath(os.path.join(os.getcwd(), "usage_logs"))
+    root = str(usage.root)
     if not os.path.isdir(root):
         return []
     files = sorted(
@@ -123,7 +124,7 @@ def main():
     months = int(sys.argv[1]) if len(sys.argv) > 1 else 3
     report = build_report(months)
     print(report)
-    root = os.path.abspath(os.path.join(os.getcwd(), "usage_logs"))
+    root = str(usage.root)
     os.makedirs(root, exist_ok=True)
     with open(os.path.join(root, "report-latest.md"), "w", encoding="utf-8") as f:
         f.write(report)

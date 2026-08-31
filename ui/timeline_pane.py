@@ -381,6 +381,10 @@ class TimelineCanvas(QWidget):
             x2 = int(x_of(e + timedelta(days=1)))
             yc = y + row_h // 2
             is_milestone = (e - s).days <= 0
+            conflict_details = getattr(node, "resource_conflict_details", [])
+            unresolved_resource = any(
+                value.get("state") != "accepted" for value in conflict_details)
+            accepted_resource = bool(conflict_details) and not unresolved_resource
 
             if is_milestone:
                 size = min(row_h - 10, 16)
@@ -392,6 +396,11 @@ class TimelineCanvas(QWidget):
                 p.setPen(QPen(C_MILESTONE.darker(120), 1))
                 p.setBrush(C_MILESTONE)
                 p.drawPolygon(tri)
+                if unresolved_resource or accepted_resource:
+                    p.setPen(QPen(QColor("#dc2626") if unresolved_resource
+                                  else QColor("#f59e0b"), 2))
+                    p.setBrush(Qt.BrushStyle.NoBrush)
+                    p.drawPolygon(tri)
                 hit = QRect(int(cx - size), int(yc - size),
                             int(size * 2), int(size * 2))
                 x2 = int(cx + size / 2)
@@ -414,6 +423,11 @@ class TimelineCanvas(QWidget):
                 p.drawRoundedRect(bar, 3, 3)
                 if self._is_critical(node):
                     p.setPen(QPen(C_CRITICAL, 2))
+                    p.setBrush(Qt.BrushStyle.NoBrush)
+                    p.drawRoundedRect(bar, 3, 3)
+                if unresolved_resource or accepted_resource:
+                    p.setPen(QPen(QColor("#dc2626") if unresolved_resource
+                                  else QColor("#f59e0b"), 2))
                     p.setBrush(Qt.BrushStyle.NoBrush)
                     p.drawRoundedRect(bar, 3, 3)
                 hit = bar.adjusted(-2, -4, 2, 4)
@@ -549,6 +563,9 @@ class TimelineCanvas(QWidget):
                 trail = node.revision_trail()
                 if trail:
                     tip += f"\n{trail}"
+            if node.schedule_conflicts:
+                tip += "\nRESOURCE CONFLICT:\n" + "\n".join(
+                    node.schedule_conflicts)
             QToolTip.showText(event.globalPosition().toPoint(), tip, self)
         else:
             QToolTip.hideText()

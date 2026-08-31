@@ -20,11 +20,12 @@ UI can spin up one tab per project regardless of source format.
 import json
 import os
 import shutil
+import uuid
 from typing import List, Dict
 from models.task_node import TaskNode
 
 
-CURRENT_VERSION = "2.3"
+CURRENT_VERSION = "2.6"
 BACKUP_KEEP = 5
 
 
@@ -73,15 +74,24 @@ def _repair_envelope(node: TaskNode):
             node.end_date = max(ends)
 
 
-def save_projects(projects: List[Dict], filename: str, rotate_backups: bool = True):
+def save_projects(projects: List[Dict], filename: str, rotate_backups: bool = True,
+                  resource_definitions=None, conflict_resolutions=None):
     """Save a list of project dicts to disk in v2.0 format.
 
     Each project dict must have: {"name": str, "metadata": dict, "roots": [TaskNode, ...]}.
     """
+    shared = projects[0] if projects else {}
     payload = {
         "version": CURRENT_VERSION,
+        "resource_definitions": list(
+            resource_definitions if resource_definitions is not None else
+            shared.get("resource_definitions", [])),
+        "resource_conflict_resolutions": list(
+            conflict_resolutions if conflict_resolutions is not None else
+            shared.get("resource_conflict_resolutions", [])),
         "projects": [
             {
+                "id": p.get("id") or f"proj-{uuid.uuid4().hex}",
                 "name": p["name"],
                 "metadata": p.get("metadata", {}),
                 "tasks": [n.to_dict() for n in p.get("roots", [])],
@@ -89,6 +99,9 @@ def save_projects(projects: List[Dict], filename: str, rotate_backups: bool = Tr
                 "notes": p.get("notes", []),
                 "notepad_html": p.get("notepad_html", ""),
                 "is_vave": bool(p.get("is_vave", False)),
+                "reviewed_through": p.get("reviewed_through"),
+                "note_tabs": p.get("note_tabs", []),
+                "resources": p.get("resources", {}),
             }
             for p in projects
         ],
@@ -113,6 +126,11 @@ def load_projects(filename: str) -> List[Dict]:
     with open(filename, "r") as f:
         data = json.load(f)
 
+    shared_definitions = (data.get("resource_definitions", [])
+                          if isinstance(data, dict) else []) or []
+    shared_resolutions = (data.get("resource_conflict_resolutions", [])
+                          if isinstance(data, dict) else []) or []
+
     projects_raw = _normalize_to_projects(data)
 
     result = []
@@ -124,15 +142,23 @@ def load_projects(filename: str) -> List[Dict]:
         for r in roots:
             _repair_envelope(r)
         result.append({"name": name, "metadata": metadata, "roots": roots,
+                       "id": proj.get("id") or f"proj-{uuid.uuid4().hex}",
                        "journal": proj.get("journal", []) or [],
                        "notes": proj.get("notes", []) or [],
                        "notepad_html": proj.get("notepad_html", "") or "",
-                       "is_vave": bool(proj.get("is_vave", False))})
+                       "is_vave": bool(proj.get("is_vave", False)),
+                       "reviewed_through": (proj.get("reviewed_through")
+                                            or metadata.get("reviewed_through")),
+                       "note_tabs": proj.get("note_tabs", []) or []})
+        result[-1]["resources"] = proj.get("resources", {}) or {}
+        result[-1]["resource_definitions"] = list(shared_definitions)
+        result[-1]["resource_conflict_resolutions"] = list(shared_resolutions)
 
     # Always hand back at least one project so the UI has something to show.
     if not result:
         result.append({"name": "Project 1", "metadata": {}, "roots": [],
-                       "is_vave": False})
+                       "is_vave": False, "resource_definitions": [],
+                       "resource_conflict_resolutions": []})
     return result
 
 

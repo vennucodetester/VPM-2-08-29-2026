@@ -213,32 +213,26 @@ class LinkTaskDialog(QDialog):
 
 
 class ImpactReviewDialog(QDialog):
-    """Shown the moment a task's start OR end date changes.
+    """Review the schedule impact of an ordinary date change.
 
-    One combined window: it leads with the thing that matters — does the
-    project end date move? — lists every task that shifts, and (when the edit
-    pushes the task past its baseline) includes a 'reason for delay' box so the
-    impact review and the delay log happen in a single OK. No second popup.
+    Delay history is intentionally separate: only the explicit
+    ``Record Real Delay`` action can add a delay revision.
 
     Takes a precomputed `review` payload (built by TreeGridView._simulate_impact
     using the real scheduler on a clone, so the numbers are truthful):
         task_name, change_desc,
         project_end_old, project_end_new, project_delta,
-        impacts: [{name, old_end, new_end, on_chain}],
-        delay_slip (int, 0 = no delay box), delay_rev, node_new_end
-    After exec(): result_action ("update_all"|"keep_others"|None) and
-    delay_reason (typed text, "" if none).
+        impacts: [{name, old_end, new_end, on_chain}]
+    After exec(): result_action ("update_all"|"keep_others"|None).
     """
 
     def __init__(self, review, parent=None):
         super().__init__(parent)
         self.review = review or {}
         self.result_action = None  # "update_all" | "keep_others" | None
-        self.delay_reason = ""
-        self._reason_edit = None
 
         self.setWindowTitle("Date change — impact review")
-        self.resize(700, 580)
+        self.resize(620, 430)
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
 
@@ -313,23 +307,6 @@ class ImpactReviewDialog(QDialog):
             layout.addWidget(self._rich(
                 "<span style='color:#888;'>No other tasks are affected.</span>"))
 
-        # ---- delay reason (only when this edit slips past the baseline) ----
-        slip = int(self.review.get('delay_slip', 0) or 0)
-        if slip > 0:
-            rev = self.review.get('delay_rev', '?')
-            reason_box = QLabel(
-                f"⏱  This is a <b>+{slip}d</b> delay vs baseline "
-                f"(Rev {rev}). Log the reason:")
-            reason_box.setTextFormat(Qt.TextFormat.RichText)
-            reason_box.setStyleSheet(
-                "background:#FFF6E5; color:#5A3E00; border:1px solid #E0B85C;"
-                "border-radius:6px; padding:8px;")
-            layout.addWidget(reason_box)
-            self._reason_edit = QLineEdit()
-            self._reason_edit.setPlaceholderText(
-                "e.g. Vendor late on parts (optional, but recommended)")
-            layout.addWidget(self._reason_edit)
-
         # ---- decision buttons ----
         row = QHBoxLayout()
         ok = QPushButton("OK — apply")
@@ -355,16 +332,10 @@ class ImpactReviewDialog(QDialog):
         lbl.setStyleSheet(f"font-size:{size}px;")
         return lbl
 
-    def _capture_reason(self):
-        if self._reason_edit is not None:
-            self.delay_reason = self._reason_edit.text().strip()
-
     def _ok(self):
         self.result_action = "update_all"
-        self._capture_reason()
         self.accept()
 
     def _only(self):
         self.result_action = "keep_others"
-        self._capture_reason()
         self.accept()

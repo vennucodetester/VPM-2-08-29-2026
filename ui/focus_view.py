@@ -143,7 +143,7 @@ class FocusView(QWidget):
     def _task_menu(self, node, widget, pos):
         menu = QMenu(self)
         menu.addAction("Mark Completed", lambda: self.task_action_requested.emit(node.id, "complete"))
-        menu.addAction("Log delay reason...", lambda: self.task_action_requested.emit(node.id, "delay"))
+        menu.addAction("Record Real Delay...", lambda: self.task_action_requested.emit(node.id, "delay"))
         menu.addAction("Jump to Tracker", lambda: self.task_activated.emit(node.id))
         menu.exec(widget.mapToGlobal(pos))
 

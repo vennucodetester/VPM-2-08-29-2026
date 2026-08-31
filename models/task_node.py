@@ -36,6 +36,16 @@ class TaskNode:
         self.is_parallel: bool = False
         self.vave_potential: Optional[float] = None
         self.vave_realized: Optional[float] = None
+        self.vave_stage: str = "Idea"
+        self.savings_disposition: str = ""
+        self.template_snapshot: Dict[str, Any] = {}
+        self.task_tokens: List[Dict[str, Any]] = []
+        self.resources: Dict[str, str] = {}
+        self.resource_capacities: Dict[str, int] = {}
+        self.schedule_conflicts: List[str] = []
+        # Derived by the document-wide analyzer; intentionally not serialized.
+        self.resource_conflict_details: List[Dict[str, Any]] = []
+        self.schedule_reason: str = ""
 
         # Hierarchy
         self.parent: Optional[TaskNode] = parent
@@ -43,8 +53,11 @@ class TaskNode:
 
         # Meta
         self.expanded: bool = True
-        self.dates_locked: bool = False
-        self.predecessor_id: Optional[str] = None  # Manual cross-tree link
+        # One controlling rule per date field. Compatibility properties below
+        # expose the old dates_locked/predecessor_id API while UI migration is
+        # completed in small releases.
+        self.start_rule: Dict[str, Any] = {"mode": "automatic"}
+        self.end_rule: Dict[str, Any] = {"mode": "duration", "days": 1}
         self.baseline_duration: Optional[int] = None  # Set by "Set Baseline" (Rev A)
         self.baseline_end: Optional[str] = None       # End date at baseline time
         self.delay_notes: str = ""  # Legacy free-text log (pre-revision files)
@@ -56,6 +69,107 @@ class TaskNode:
         # re-stamps the baseline silently (a new line is on track by
         # definition); only edits after that count as delay.
         self.baseline_provisional: bool = False
+
+    def resource_tokens(self):
+        """All assigned metadata resources, retaining multiple same-kind values."""
+        tokens = [dict(token) for token in self.task_tokens
+                  if (token.get("kind") or "").casefold()
+                  not in {"phase", "campaign", "header"}]
+        represented = {((t.get("kind") or "").casefold(),
+                        (t.get("label") or "").strip().casefold())
+                       for t in tokens}
+        for kind, label in self.resources.items():
+            key = (kind.casefold(), str(label).strip().casefold())
+            if label and key not in represented:
+                from utils.resource_allocation import legacy_resource_id
+                tokens.append({"kind": kind, "label": label,
+                               "id": legacy_resource_id(kind, label)})
+        return tokens
+
+    @staticmethod
+    def _normalize_start_rule(rule) -> Dict[str, Any]:
+        rule = dict(rule or {})
+        mode = rule.get("mode", "automatic")
+        if mode not in {"automatic", "fixed", "same_as", "continue_after"}:
+            mode = "automatic"
+        clean = {"mode": mode}
+        if mode == "fixed":
+            clean["date"] = rule.get("date")
+        elif mode in {"same_as", "continue_after"}:
+            clean.update({
+                "task_id": rule.get("task_id"),
+                "field": rule.get("field", "start" if mode == "same_as" else "end"),
+                "offset": max(0, int(rule.get("offset", 0) or 0)),
+                "offset_unit": rule.get("offset_unit", "workdays"),
+            })
+        return clean
+
+    @staticmethod
+    def _normalize_end_rule(rule, fallback_days=1) -> Dict[str, Any]:
+        rule = dict(rule or {})
+        mode = rule.get("mode", "duration")
+        if mode not in {"duration", "fixed", "same_as"}:
+            mode = "duration"
+        if mode == "duration":
+            return {"mode": "duration", "days": max(1, int(rule.get("days", fallback_days) or 1))}
+        if mode == "fixed":
+            return {"mode": "fixed", "date": rule.get("date")}
+        return {
+            "mode": "same_as",
+            "task_id": rule.get("task_id"),
+            "field": rule.get("field", "end"),
+        }
+
+    @property
+    def dates_locked(self) -> bool:
+        return self.start_rule.get("mode") == "fixed" or self.end_rule.get("mode") == "fixed"
+
+    @dates_locked.setter
+    def dates_locked(self, locked: bool):
+        if locked:
+            self.start_rule = {"mode": "fixed", "date": self.start_date}
+            self.end_rule = {"mode": "fixed", "date": self.end_date}
+        else:
+            days = 1
+            if self.start_date and self.end_date:
+                days = max(1, WorkdayCalculator.calculate_duration(self.start_date, self.end_date))
+            self.start_rule = {"mode": "automatic"}
+            self.end_rule = {"mode": "duration", "days": days}
+
+    @property
+    def predecessor_id(self) -> Optional[str]:
+        if self.start_rule.get("mode") == "continue_after":
+            return self.start_rule.get("task_id")
+        return None
+
+    @predecessor_id.setter
+    def predecessor_id(self, node_id: Optional[str]):
+        if node_id:
+            self.start_rule = {
+                "mode": "continue_after", "task_id": node_id,
+                "field": "end", "offset": 0, "offset_unit": "workdays",
+            }
+        elif self.start_rule.get("mode") == "continue_after":
+            self.start_rule = {"mode": "automatic"}
+
+    def set_start_rule(self, rule):
+        self.start_rule = self._normalize_start_rule(rule)
+
+    def set_end_rule(self, rule):
+        fallback = max(1, int(self.duration or 1))
+        self.end_rule = self._normalize_end_rule(rule, fallback)
+
+    def rule_explanation(self, field: str) -> str:
+        rule = self.start_rule if field == "start" else self.end_rule
+        mode = rule.get("mode")
+        if mode == "automatic":
+            return "Automatic"
+        if mode == "duration":
+            return f"Duration: {rule.get('days', 1)} workday(s)"
+        if mode == "fixed":
+            return f"Fixed: {rule.get('date') or 'unset'}"
+        relation = "Same as" if mode == "same_as" else "Continue after"
+        return f"{relation} {rule.get('task_id') or 'missing'} · {rule.get('field', field).title()}"
 
     def add_child(self, child: 'TaskNode'):
         child.parent = self
@@ -115,7 +229,7 @@ class TaskNode:
         # F1: honor dates_locked — but only for the start date.
         # The end date is always auto-rolled-up from children (max of children's
         # end dates), so we must let end-date writes through even when locked.
-        if self.dates_locked and not force and date_type == 'start':
+        if self.start_rule.get("mode") == "fixed" and not force and date_type == 'start':
             return
 
         changed = False
@@ -168,10 +282,7 @@ class TaskNode:
 
     def update_from_previous_sibling(self, prev_sibling: 'TaskNode'):
         """Start = Prev.End + 1 workday, shift End to preserve duration."""
-        if self.predecessor_id:
-            # Manual link wins over implicit sibling chain
-            return
-        if self.dates_locked:
+        if self.start_rule.get("mode") != "automatic":
             return
         if not prev_sibling.end_date:
             return
@@ -194,7 +305,7 @@ class TaskNode:
     def update_first_child_from_parent(self, parent: 'TaskNode'):
         """First child with is_parallel=OFF anchors to parent.start_date.
         Duration is preserved; end shifts to match."""
-        if self.predecessor_id or self.dates_locked:
+        if self.start_rule.get("mode") != "automatic":
             return
         if not parent.start_date:
             return
@@ -209,7 +320,7 @@ class TaskNode:
 
     def update_from_predecessor(self, predecessor: 'TaskNode'):
         """Start = Predecessor.End + 1 workday (manual cross-tree link)."""
-        if self.dates_locked:
+        if self.start_rule.get("mode") != "continue_after":
             return
         if not predecessor.end_date:
             return
@@ -237,11 +348,9 @@ class TaskNode:
         if not self.children or delta_days == 0:
             return
         for child in self.children:
-            if child.dates_locked:
-                continue
-            if child.start_date:
+            if child.start_rule.get("mode") != "fixed" and child.start_date:
                 child.start_date = self._add_days(child.start_date, delta_days)
-            if child.end_date:
+            if child.end_rule.get("mode") != "fixed" and child.end_date:
                 child.end_date = self._add_days(child.end_date, delta_days)
                 child.end_date = _clamp_end(child.start_date, child.end_date)
             if child.children:
@@ -281,6 +390,7 @@ class TaskNode:
             days = 1
         if not self.start_date:
             return
+        self.end_rule = {"mode": "duration", "days": days}
         new_end = WorkdayCalculator.add_workdays(self.start_date, days)
         self.set_date('end', new_end)
 
@@ -423,10 +533,6 @@ class TaskNode:
         manual = getattr(self, attr, None)
         if manual is not None:
             return manual
-        if attr == "vave_realized" and self.status == "Completed":
-            potential = self._vave_display_value("vave_potential")
-            if potential is not None:
-                return potential
         rolled = sum(
             float(value)
             for child in self.children
@@ -445,10 +551,6 @@ class TaskNode:
         manual = getattr(self, attr, None)
         if manual is not None:
             return float(manual)
-        if attr == "vave_realized" and self.status == "Completed":
-            potential = self._vave_display_value("vave_potential")
-            if potential is not None:
-                return float(potential)
         return sum(child._vave_total_value(attr) for child in self.children)
 
     # ------------------------------------------------------------------
@@ -470,10 +572,18 @@ class TaskNode:
             "is_parallel": self.is_parallel,
             "vave_potential": self.vave_potential,
             "vave_realized": self.vave_realized,
+            "vave_stage": self.vave_stage,
+            "savings_disposition": self.savings_disposition,
+            "template_snapshot": dict(self.template_snapshot),
+            "task_tokens": [dict(token) for token in self.task_tokens],
+            "resources": dict(self.resources),
+            "resource_capacities": dict(self.resource_capacities),
             "children": [c.to_dict() for c in self.children],
             "expanded": self.expanded,
             "dates_locked": self.dates_locked,
             "predecessor_id": self.predecessor_id,
+            "start_rule": dict(self.start_rule),
+            "end_rule": dict(self.end_rule),
             "baseline_duration": self.baseline_duration,
             "baseline_end": self.baseline_end,
             "delay_notes": self.delay_notes,
@@ -497,9 +607,43 @@ class TaskNode:
         node.notes = data.get("notes", "")
         node.vave_potential = cls._money_or_none(data.get("vave_potential"))
         node.vave_realized = cls._money_or_none(data.get("vave_realized"))
+        node.vave_stage = data.get("vave_stage", "Idea")
+        node.savings_disposition = data.get("savings_disposition", "")
+        node.template_snapshot = dict(data.get("template_snapshot") or {})
+        node.task_tokens = [dict(token) for token in (data.get("task_tokens") or [])]
+        node.resources = dict(data.get("resources") or {})
+        node.resource_capacities = {
+            str(key): max(1, int(value or 1))
+            for key, value in (data.get("resource_capacities") or {}).items()
+        }
         node.expanded = data.get("expanded", True)
-        node.dates_locked = data.get("dates_locked", False)
-        node.predecessor_id = data.get("predecessor_id")
+        # v2.4 scheduling-rule migration. Existing files retain their displayed
+        # dates; no scheduler run is triggered during deserialization.
+        if "start_rule" in data:
+            node.start_rule = cls._normalize_start_rule(data.get("start_rule"))
+        elif data.get("dates_locked", False):
+            node.start_rule = {"mode": "fixed", "date": node.start_date}
+        elif data.get("predecessor_id"):
+            node.start_rule = cls._normalize_start_rule({
+                "mode": "continue_after", "task_id": data.get("predecessor_id"),
+                "field": "end",
+            })
+        elif data.get("is_parallel", False) and parent is not None:
+            node.start_rule = cls._normalize_start_rule({
+                "mode": "same_as", "task_id": parent.id, "field": "start",
+            })
+        else:
+            node.start_rule = {"mode": "automatic"}
+        fallback_days = 1
+        if node.start_date and node.end_date:
+            fallback_days = max(1, WorkdayCalculator.calculate_duration(
+                node.start_date, node.end_date))
+        if "end_rule" in data:
+            node.end_rule = cls._normalize_end_rule(data.get("end_rule"), fallback_days)
+        elif data.get("dates_locked", False):
+            node.end_rule = {"mode": "fixed", "date": node.end_date}
+        else:
+            node.end_rule = {"mode": "duration", "days": fallback_days}
         node.baseline_duration = data.get("baseline_duration")
         node.baseline_end = data.get("baseline_end")
         node.delay_notes = data.get("delay_notes", "")

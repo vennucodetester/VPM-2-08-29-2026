@@ -30,9 +30,10 @@ class ProjectWidget(QWidget):
     def __init__(self, name: str = "Project 1", metadata: Dict = None,
                  roots: List[TaskNode] = None, journal: list = None,
                  notes: list = None, notepad_html: str = None,
-                 is_vave: bool = False, parent=None):
+                 is_vave: bool = False, project_id: str = None,
+                 note_tabs: list = None, resources: dict = None, parent=None):
         super().__init__(parent)
-        self.project_id = f"proj-{uuid.uuid4().hex[:8]}"
+        self.project_id = project_id or f"proj-{uuid.uuid4().hex}"
         self.name = name or "Project 1"
         self.history = HistoryStack(max_depth=50)
         # Set before _build_ui so the pad's signal handlers are always safe.
@@ -44,6 +45,10 @@ class ProjectWidget(QWidget):
         # in the .vpmt file. Entries: {"ts": "2026-06-10 14:32", "text": "..."}
         self.journal: list = list(journal) if journal else []
         self.is_vave = bool(is_vave)
+        self.reviewed_through = (metadata or {}).get("reviewed_through")
+        self._loaded_note_tabs = list(note_tabs or [])
+        self.resource_lists = {key: list((resources or {}).get(key, []))
+                               for key in ("case", "room", "article")}
 
         # Register metadata into the per-project config store.
         ConfigManager.register_project(self.project_id, metadata or {})
@@ -80,6 +85,7 @@ class ProjectWidget(QWidget):
         layout.addWidget(self.inner_tabs)
 
         self.tree_view = TreeGridView()
+        self.tree_view.resource_lists = self.resource_lists
 
         # Tracker tab = grid + attached timeline (MS Project style):
         # same rows, same scroll, same collapse state — the timeline asks
@@ -115,13 +121,34 @@ class ProjectWidget(QWidget):
         self.inner_tabs.addTab(self.tracker_tab, "Tracker")
 
         self.notes_dialog = QDialog(self)
-        self.notes_dialog.setWindowTitle(f"Project Notepad - {self.name}")
+        self.notes_dialog.setWindowTitle(f"Notes Center — {self.name}")
         self.notes_dialog.resize(760, 640)  # bigger default; user can resize
         self.notes_dialog.setModal(False)
         notes_layout = QVBoxLayout(self.notes_dialog)
         notes_layout.setContentsMargins(0, 0, 0, 0)
+        from PyQt6.QtWidgets import QHBoxLayout, QPushButton, QListWidget, QInputDialog
+        note_tools = QHBoxLayout()
+        add_tab = QPushButton("+ Note Tab")
+        rename_tab = QPushButton("Rename")
+        delete_tab = QPushButton("Delete")
+        note_tools.addWidget(add_tab)
+        note_tools.addWidget(rename_tab)
+        note_tools.addWidget(delete_tab)
+        note_tools.addStretch()
+        notes_layout.addLayout(note_tools)
+        self.notes_tabs = QTabWidget()
+        notes_layout.addWidget(self.notes_tabs, 1)
         self.notes_panel = NotesPanel()
-        notes_layout.addWidget(self.notes_panel)
+        self.notes_tabs.addTab(self.notes_panel, "Overall")
+        self.all_task_notes = QListWidget()
+        self.all_task_notes.itemActivated.connect(self._jump_from_all_notes)
+        self.notes_tabs.addTab(self.all_task_notes, "All Task Notes")
+        self.custom_note_panels = []
+        for saved in self._loaded_note_tabs:
+            self._add_note_tab(saved.get("name", "Notes"), saved.get("html", ""), mark=False)
+        add_tab.clicked.connect(self._prompt_add_note_tab)
+        rename_tab.clicked.connect(self._rename_note_tab)
+        delete_tab.clicked.connect(self._delete_note_tab)
 
         # Remember the pad's size/position across opens and app restarts.
         self._notes_settings = QSettings("VPM", "VPMTracker")
@@ -154,7 +181,8 @@ class ProjectWidget(QWidget):
         self._update_vave_totals()
 
     def _on_inner_tab_changed(self, index: int):
-        usage_logger.log("tab_switch", to="visuals" if index == 1 else "tracker")
+        labels = {0: "tracker", 1: "visuals"}
+        usage_logger.log("tab_switch", to=labels.get(index, "project_view"))
         if index == 1:  # Visuals
             self.gantt_view.load_nodes(self.tree_view.root_nodes)
 
@@ -192,11 +220,88 @@ class ProjectWidget(QWidget):
                     f"'{node.name}': status set to Completed from Visuals")
                 self.tree_view.commit_structure_change(node)
         elif action == "delay":
-            delay_delegate = self.tree_view.itemDelegateForColumn(Columns.DELAY)
-            if hasattr(delay_delegate, "_open_dialog"):
-                idx = self.tree_view.indexFromItem(item, Columns.DELAY)
-                delay_delegate._open_dialog(idx)
+            self.tree_view.record_real_delay(node)
         self.gantt_view.load_nodes(self.tree_view.root_nodes)
+
+    def _add_note_tab(self, name, html="", mark=True):
+        panel = NotesPanel()
+        panel.set_html(html)
+        panel.notes_changed.connect(self._on_notes_changed)
+        panel.make_tasks_requested.connect(self._make_tasks_from_notes)
+        self.custom_note_panels.append(panel)
+        self.notes_tabs.addTab(panel, (name or "Notes").strip())
+        if mark:
+            self.notes_tabs.setCurrentWidget(panel)
+            self._on_notes_changed()
+
+    def _prompt_add_note_tab(self):
+        from PyQt6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self.notes_dialog, "New Note Tab", "Name:")
+        if ok and name.strip():
+            self._add_note_tab(name.strip())
+
+    def _rename_note_tab(self):
+        from PyQt6.QtWidgets import QInputDialog
+        index = self.notes_tabs.currentIndex()
+        if index < 2:
+            return
+        old = self.notes_tabs.tabText(index)
+        name, ok = QInputDialog.getText(self.notes_dialog, "Rename Note Tab", "Name:", text=old)
+        if ok and name.strip() and name.strip() != old:
+            self.notes_tabs.setTabText(index, name.strip())
+            self._on_notes_changed()
+
+    def _delete_note_tab(self):
+        from PyQt6.QtWidgets import QMessageBox
+        index = self.notes_tabs.currentIndex()
+        if index < 2:
+            return
+        if QMessageBox.question(
+                self.notes_dialog, "Delete Note Tab",
+                f"Delete '{self.notes_tabs.tabText(index)}'?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        panel = self.notes_tabs.widget(index)
+        self.notes_tabs.removeTab(index)
+        if panel in self.custom_note_panels:
+            self.custom_note_panels.remove(panel)
+        panel.deleteLater()
+        self._on_notes_changed()
+
+    def _note_tabs_data(self):
+        return [{"name": self.notes_tabs.tabText(self.notes_tabs.indexOf(panel)),
+                 "html": panel.get_html()}
+                for panel in self.custom_note_panels]
+
+    def _set_note_tabs_data(self, values):
+        for panel in list(self.custom_note_panels):
+            self.notes_tabs.removeTab(self.notes_tabs.indexOf(panel))
+            panel.deleteLater()
+        self.custom_note_panels = []
+        for saved in values or []:
+            self._add_note_tab(saved.get("name", "Notes"), saved.get("html", ""), mark=False)
+
+    def _refresh_all_task_notes(self):
+        self.all_task_notes.clear()
+        for node in self.tree_view.get_all_nodes_flat():
+            if not node.notes.strip():
+                continue
+            parts, current = [], node
+            while current:
+                parts.append(current.name)
+                current = current.parent
+            label = f"[{self.name}] {' > '.join(reversed(parts))}\n{node.notes.strip()}"
+            from PyQt6.QtWidgets import QListWidgetItem
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, node.id)
+            self.all_task_notes.addItem(item)
+
+    def _jump_from_all_notes(self, item):
+        node_id = item.data(Qt.ItemDataRole.UserRole)
+        if node_id:
+            self.notes_dialog.hide()
+            self._jump_to_task(node_id)
 
     def show_notes_and_capture(self):
         """Show the notes pad as a floating notepad window.
@@ -205,7 +310,8 @@ class ProjectWidget(QWidget):
         remains in the background and is still saved with the project.
         """
         self.inner_tabs.setCurrentIndex(0)  # Tracker tab
-        self.notes_dialog.setWindowTitle(f"Project Notepad - {self.name}")
+        self.notes_dialog.setWindowTitle(f"Notes Center — {self.name}")
+        self._refresh_all_task_notes()
         geo = self._notes_settings.value("notes_pad_geometry")
         if geo is not None:
             self.notes_dialog.restoreGeometry(geo)
@@ -214,6 +320,19 @@ class ProjectWidget(QWidget):
         self.notes_dialog.activateWindow()
         self.notes_panel.focus_capture()
         usage_logger.log("notes_pad_open")
+
+    def show_contextual_notes(self):
+        """Ctrl+Space opens selected task notes; otherwise the Notes Center."""
+        selected = [item for item in self.tree_view.selectedItems()
+                    if hasattr(item, "node")]
+        if selected:
+            item = selected[0]
+            delegate = self.tree_view.itemDelegateForColumn(Columns.NOTES)
+            if hasattr(delegate, "open_dialog"):
+                usage_logger.log("task_note_open", via="ctrl_space")
+                delegate.open_dialog(self.tree_view.indexFromItem(item, Columns.NOTES))
+                return
+        self.show_notes_and_capture()
 
     # ---- lifecycle ----
     def activate(self):
@@ -234,12 +353,16 @@ class ProjectWidget(QWidget):
         """Serialize current state to a plain dict (safe to deepcopy)."""
         from utils.config_manager import ConfigManager as CM
         return {
+            "id": self.project_id,
             "name": self.name,
             "metadata": CM.snapshot_project(self.project_id),
             "tasks": [n.to_dict() for n in self.tree_view.root_nodes],
             "notes": self.notes_panel.get_notes(),
             "notepad_html": self.notes_panel.get_html(),
             "is_vave": self.is_vave,
+            "reviewed_through": self.reviewed_through,
+            "note_tabs": self._note_tabs_data(),
+            "resources": {key: list(values) for key, values in self.resource_lists.items()},
         }
 
     def load_snapshot(self, snap: Dict):
@@ -247,6 +370,10 @@ class ProjectWidget(QWidget):
         if not snap:
             return
         self.name = snap.get("name", self.name)
+        self.reviewed_through = snap.get("reviewed_through")
+        self.resource_lists.clear()
+        self.resource_lists.update({key: list((snap.get("resources") or {}).get(key, []))
+                                    for key in ("case", "room", "article")})
         md = snap.get("metadata", {}) or {}
         ConfigManager.register_project(self.project_id, md)
         self._activate_config()
@@ -260,6 +387,7 @@ class ProjectWidget(QWidget):
                 self.notes_panel.set_html(snap["notepad_html"])
             else:
                 self.notes_panel.load_notes(snap.get("notes") or [])
+            self._set_note_tabs_data(snap.get("note_tabs") or [])
             self.is_vave = bool(snap.get("is_vave", False))
             self.tree_view.set_vave_enabled(self.is_vave)
             self.timeline.refresh()  # keep the timeline's VAVE bar in sync
@@ -396,11 +524,18 @@ class ProjectWidget(QWidget):
         """Shape matching utils.vpmt_io.save_projects()."""
         from utils.config_manager import ConfigManager as CM
         return {
+            "id": self.project_id,
             "name": self.name,
-            "metadata": CM.snapshot_project(self.project_id),
+            "metadata": {
+                **CM.snapshot_project(self.project_id),
+                "reviewed_through": self.reviewed_through,
+            },
             "roots": list(self.tree_view.root_nodes),
             "journal": list(self.journal),
             "notes": self.notes_panel.get_notes(),
             "notepad_html": self.notes_panel.get_html(),
             "is_vave": self.is_vave,
+            "reviewed_through": self.reviewed_through,
+            "note_tabs": self._note_tabs_data(),
+            "resources": {key: list(values) for key, values in self.resource_lists.items()},
         }
