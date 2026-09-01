@@ -22,6 +22,10 @@ def main():
 
     sys.excepthook = log_excepthook
     app = QApplication(sys.argv)
+
+    # Telemetry is required for this build so work-session issues can be reviewed.
+    # Force it on at startup in case an older saved QSettings value disabled it.
+    usage_logger.set_enabled(True)
     usage_logger.log("app_start", version=AppConstants.VERSION)
     append_support_event("app_start")
     
