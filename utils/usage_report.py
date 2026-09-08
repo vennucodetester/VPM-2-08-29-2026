@@ -15,8 +15,8 @@ KNOWN_FEATURES = [
 ]
 
 
-def _read_events(months: int):
-    root = str(usage.root)
+def _read_events(months: int, root=None):
+    root = str(root if root is not None else usage.root)
     if not os.path.isdir(root):
         return []
     files = sorted(
@@ -38,8 +38,8 @@ def _read_events(months: int):
     return events
 
 
-def build_report(months: int = 3) -> str:
-    events = _read_events(months)
+def build_report(months: int = 3, root=None) -> str:
+    events = _read_events(months, root=root)
     counts = Counter(e.get("ev") for e in events)
     sessions = defaultdict(dict)
     weekdays = Counter()

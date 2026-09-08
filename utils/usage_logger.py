@@ -6,6 +6,7 @@ import json
 import os
 import secrets
 import sys
+import threading
 import time
 import uuid
 from collections import Counter
@@ -19,9 +20,13 @@ from utils.version_info import install_dir
 
 SCHEMA_VERSION = 2
 SESSION_IDLE_SECONDS = 30 * 60
+REPO_TELEMETRY_DIRNAME = "telemetry"
+REPO_EXPORT_MONTHS = 2
+CLOSE_EXPORT_TIMEOUT_SECONDS = 1.0
 SENSITIVE_KEYS = {
     "path", "file", "filename", "task", "task_name", "note", "text",
     "dollar", "dollars", "amount", "value",
+    "token", "password", "secret", "email",
 }
 
 
@@ -30,6 +35,13 @@ def _default_root() -> Path:
     if base:
         return Path(base) / "VPMTracker" / "telemetry"
     return Path.home() / ".vpm_tracker" / "telemetry"
+
+
+def repo_telemetry_dir(dest=None) -> Path:
+    """Repo-local snapshot folder. AppData remains the canonical store."""
+    if dest:
+        return Path(dest)
+    return Path(install_dir()) / REPO_TELEMETRY_DIRNAME
 
 
 def _safe_details(details: dict) -> dict:
@@ -43,6 +55,43 @@ def _safe_details(details: dict) -> dict:
         if isinstance(value, (str, int, float, bool)) or value is None:
             clean[key] = value
     return clean
+
+
+def _atomic_write_text(path: Path, text: str):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _sanitize_event(row: dict) -> dict | None:
+    if not isinstance(row, dict) or not row.get("ev"):
+        return None
+    clean = {
+        "schema": row.get("schema", SCHEMA_VERSION),
+        "eid": row.get("eid"),
+        "ts": row.get("ts"),
+        "sid": row.get("sid"),
+        "install": row.get("install"),
+        "project": row.get("project"),
+        "env": row.get("env"),
+        "ev": str(row.get("ev")),
+        "d": _safe_details(row.get("d") or {}),
+    }
+    return clean
+
+
+def _recent_month_stamps(count=REPO_EXPORT_MONTHS):
+    now = datetime.now()
+    year, month = now.year, now.month
+    stamps = []
+    for _ in range(max(1, count)):
+        stamps.append(f"{year:04d}-{month:02d}")
+        month -= 1
+        if month == 0:
+            year -= 1
+            month = 12
+    return stamps
 
 
 class UsageLogger:
@@ -68,6 +117,8 @@ class UsageLogger:
         self.enabled = bool(configured if enabled is None else enabled) \
             and (not is_test or enabled is True)
         self.environment = "test" if is_test else "production"
+        self._export_lock = threading.Lock()
+        self._export_thread = None
         if not self.enabled:
             return
         self.root.mkdir(parents=True, exist_ok=True)
@@ -288,15 +339,150 @@ class UsageLogger:
             pass
 
     def diagnostics(self):
+        dest = repo_telemetry_dir()
         return {
             "enabled": self.enabled,
             "environment": self.environment,
             "storage": str(self.root),
+            "repo_export": str(dest),
             "last_event": self.state.get("last_event", "never"),
             "last_event_name": self.state.get("last_event_name", "none"),
             "last_gap_days": self.state.get("last_gap_days", 0),
             "legacy_imported": bool(self.state.get("legacy_import_v1")),
         }
+
+    def _blocks_default_repo_export(self, dest_root: Path) -> bool:
+        """Never let pytest / offscreen sessions write into the real repo folder."""
+        if self.environment != "test":
+            return False
+        default = Path(install_dir()) / REPO_TELEMETRY_DIRNAME
+        try:
+            return dest_root.resolve() == default.resolve()
+        except OSError:
+            return True
+
+    def _copy_sanitized_jsonl(self, source: Path, dest: Path) -> int:
+        kept = []
+        try:
+            lines = source.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return 0
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+            clean = _sanitize_event(row)
+            if clean is None:
+                continue
+            if clean.get("env") == "test" and self._blocks_default_repo_export(dest.parent):
+                continue
+            kept.append(json.dumps(clean, separators=(",", ":")))
+        _atomic_write_text(dest, ("\n".join(kept) + ("\n" if kept else "")))
+        return len(kept)
+
+    def export_repo_telemetry(self, dest=None, include_report=True):
+        """Copy sanitized recent AppData telemetry into the repo-local folder.
+
+        AppData (`self.root`) stays the canonical store. This writes a snapshot
+        for Creative / Git Helper: current-month JSONL (plus previous month when
+        present), summary-latest.json, and optionally report-latest.md.
+        """
+        if not self.enabled:
+            return None
+        dest_root = repo_telemetry_dir(dest)
+        if self._blocks_default_repo_export(dest_root):
+            return None
+        try:
+            dest_root.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return None
+        try:
+            for stamp in _recent_month_stamps():
+                source = self.path(stamp)
+                if source.exists():
+                    self._copy_sanitized_jsonl(source, dest_root / source.name)
+            summary_src = self.root / "summary-latest.json"
+            if not summary_src.exists():
+                self.write_summary()
+            if summary_src.exists():
+                try:
+                    _atomic_write_text(
+                        dest_root / "summary-latest.json",
+                        summary_src.read_text(encoding="utf-8"),
+                    )
+                except OSError:
+                    pass
+            if include_report:
+                try:
+                    from utils.usage_report import build_report
+                    report = build_report(months=3, root=self.root)
+                    _atomic_write_text(dest_root / "report-latest.md", report)
+                except Exception:
+                    pass
+            return dest_root
+        except OSError:
+            return None
+
+    def sync_repo_telemetry(self, dest=None, background=False, include_report=True,
+                            timeout=None):
+        """Export to the repo folder, optionally on a daemon thread.
+
+        ``timeout`` bounds a foreground call so quit cannot hang: if the
+        15-minute export already holds ``_export_lock``, return immediately;
+        otherwise wait at most ``timeout`` seconds for the copy to finish.
+        ``timeout is None`` waits for the lock and the copy (manual export).
+        """
+        if not self.enabled:
+            return None
+        dest_root = repo_telemetry_dir(dest)
+        if self._blocks_default_repo_export(dest_root):
+            return None
+        if background:
+            thread = threading.Thread(
+                target=self._export_repo_telemetry_safe,
+                args=(dest, include_report),
+                daemon=True,
+                name="telemetry-repo-export",
+            )
+            self._export_thread = thread
+            thread.start()
+            return dest_root
+        if timeout is not None:
+            return self._sync_repo_telemetry_bounded(
+                dest, include_report, max(0.0, float(timeout)))
+        with self._export_lock:
+            return self.export_repo_telemetry(dest=dest, include_report=include_report)
+
+    def _sync_repo_telemetry_bounded(self, dest, include_report, timeout):
+        """Skip if a periodic export holds the lock; otherwise join with timeout."""
+        if self._export_lock.locked():
+            return None
+        box = []
+
+        def work():
+            try:
+                with self._export_lock:
+                    box.append(self.export_repo_telemetry(
+                        dest=dest, include_report=include_report))
+            except Exception:
+                pass
+
+        thread = threading.Thread(
+            target=work, daemon=True, name="telemetry-repo-export-close")
+        self._export_thread = thread
+        thread.start()
+        thread.join(timeout)
+        return box[0] if box else None
+
+    def _export_repo_telemetry_safe(self, dest, include_report):
+        try:
+            with self._export_lock:
+                self.export_repo_telemetry(dest=dest, include_report=include_report)
+        except Exception:
+            pass
 
 
 usage = UsageLogger()
@@ -316,6 +502,13 @@ def set_project(project_id):
 
 def is_enabled() -> bool:
     return bool(usage.enabled)
+
+
+def sync_repo_telemetry(dest=None, background=False, include_report=True,
+                        timeout=None):
+    return usage.sync_repo_telemetry(
+        dest=dest, background=background, include_report=include_report,
+        timeout=timeout)
 
 
 def timed_exec(dialog, name: str):

@@ -80,6 +80,19 @@ class MainWindow(QMainWindow):
         self._autosave_timer.timeout.connect(self._autosave)
         self._autosave_timer.start(3 * 60 * 1000)
 
+        # Repo-local telemetry snapshot: AppData stays canonical. A delayed
+        # start recovers a previous crash that skipped closeEvent; the 15-minute
+        # timer covers long-lived sessions without touching the 3-minute save path.
+        # Both timers are children of this window and are stopped in closeEvent
+        # so a quit within 2.5s cannot invoke a destroyed QObject.
+        self._telemetry_export_timer = QTimer(self)
+        self._telemetry_export_timer.timeout.connect(self._sync_repo_telemetry_background)
+        self._telemetry_export_timer.start(15 * 60 * 1000)
+        self._startup_telemetry_timer = QTimer(self)
+        self._startup_telemetry_timer.setSingleShot(True)
+        self._startup_telemetry_timer.timeout.connect(self._sync_repo_telemetry_background)
+        self._startup_telemetry_timer.start(2500)
+
     def _setup_global_shortcuts(self):
         self._notepad_shortcut = QShortcut(QKeySequence("Ctrl+Space"), self)
         self._notepad_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
@@ -921,8 +934,8 @@ class MainWindow(QMainWindow):
         usage_action.setCheckable(True)
         usage_action.setChecked(usage_logger.is_enabled())
         usage_action.setToolTip(
-            "Keeps a private local log of which app features you use, so "
-            "improvement suggestions can be based on real usage. Nothing leaves this computer."
+            "Keeps a local log of which app features you use in AppData, and "
+            "copies a sanitized snapshot into the repo telemetry/ folder for review."
         )
         usage_action.toggled.connect(usage_logger.set_enabled)
         options_menu.addAction(usage_action)
@@ -930,6 +943,36 @@ class MainWindow(QMainWindow):
         diagnostics_action = QAction("Telemetry Diagnostics…", self)
         self._wire_action(diagnostics_action, self._show_telemetry_diagnostics)
         options_menu.addAction(diagnostics_action)
+
+        export_action = QAction("Export usage logs to repo folder", self)
+        export_action.setToolTip(
+            "Copy the latest sanitized AppData telemetry into telemetry/ "
+            "next to the app (does not replace the AppData store)."
+        )
+        self._wire_action(export_action, self._export_repo_telemetry)
+        options_menu.addAction(export_action)
+
+    def _sync_repo_telemetry_background(self):
+        usage_logger.sync_repo_telemetry(background=True)
+
+    def _cancel_repo_telemetry_timers(self):
+        for name in ("_startup_telemetry_timer", "_telemetry_export_timer"):
+            timer = getattr(self, name, None)
+            if timer is not None:
+                timer.stop()
+
+    def _export_repo_telemetry(self):
+        dest = usage_logger.sync_repo_telemetry(background=False)
+        if dest:
+            QMessageBox.information(
+                self, "Usage logs exported",
+                "A sanitized snapshot was written to:\n"
+                f"{dest}\n\n"
+                "The live store remains in AppData.")
+        else:
+            QMessageBox.information(
+                self, "Usage logs not exported",
+                "Usage logging is off, or the repo folder could not be written.")
 
     def _show_telemetry_diagnostics(self):
         info = usage_logger.usage.diagnostics()
@@ -941,7 +984,8 @@ class MainWindow(QMainWindow):
                 f"Last event: {info['last_event']} ({info['last_event_name']})",
                 f"Last detected gap: {info['last_gap_days']} day(s)",
                 f"Legacy logs imported: {'Yes' if info['legacy_imported'] else 'No'}",
-                f"Storage: {info['storage']}",
+                f"Storage (canonical): {info['storage']}",
+                f"Repo snapshot: {info.get('repo_export', '')}",
             ]),
         )
 
@@ -1912,9 +1956,18 @@ class MainWindow(QMainWindow):
         else:
             event.accept()
         if event.isAccepted():
-            usage_logger.log("app_end", secs=usage_logger.usage.session_secs())
-            usage_logger.usage.write_summary()
-            self.file_guard.release()
+            try:
+                self._cancel_repo_telemetry_timers()
+                usage_logger.log("app_end", secs=usage_logger.usage.session_secs())
+                usage_logger.usage.write_summary()
+                # Bound so a periodic export holding the lock cannot hang quit.
+                usage_logger.sync_repo_telemetry(
+                    background=False,
+                    timeout=usage_logger.CLOSE_EXPORT_TIMEOUT_SECONDS)
+            except Exception:
+                pass
+            finally:
+                self.file_guard.release()
 
     # ---------------- file I/O ----------------
     def save_project_file(self):
