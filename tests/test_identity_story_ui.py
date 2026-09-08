@@ -179,6 +179,36 @@ class IdentityStoryUiTests(unittest.TestCase):
             reopened.close()
         dialog.close()
 
+    def test_unchecked_overlap_flag_hides_story_overlap_graph(self):
+        selected = token("doe-1", "DOE - Type 2", "activity")
+        first = task("First", "2026-09-01", "2026-09-10", [selected])
+        second = task("Second", "2026-09-05", "2026-09-12", [selected])
+        projects = [{"id": "p", "name": "P", "roots": [first, second]}]
+        items = [{
+            "id": "doe-1", "name": "DOE - Type 2", "kind": "activity",
+            "header": "Lab Testing", "duration": 10, "flag_overlaps": False,
+        }]
+        dialog = MetadataEditorDialog(items, projects=projects)
+        try:
+            dialog._show_story("doe-1", "DOE - Type 2", "activity")
+            story = dialog.story_panel.timeline.story
+            self.assertEqual([], story.overlaps)
+            self.assertFalse(story.overlaps_enabled)
+            self.assertEqual(
+                [], dialog.story_panel.timeline.geometry_snapshot()["overlaps"])
+            self.assertNotIn("overlap", dialog.story_panel.heading.text().lower())
+            dialog.tables["activity"].item(0, 2).setCheckState(
+                Qt.CheckState.Checked)
+            dialog._show_story("doe-1", "DOE - Type 2", "activity")
+            enabled = dialog.story_panel.timeline.story
+            self.assertEqual(1, len(enabled.overlaps))
+            self.assertTrue(enabled.overlaps_enabled)
+            self.assertEqual(
+                1, len(dialog.story_panel.timeline.geometry_snapshot()["overlaps"]))
+            self.assertIn("1 overlap", dialog.story_panel.heading.text())
+        finally:
+            dialog.close()
+
     def test_phase_overlap_flag_is_disabled_and_new_options_default_off(self):
         dialog = MetadataEditorDialog([{
             "id": "phase-1", "name": "Design", "kind": "phase",

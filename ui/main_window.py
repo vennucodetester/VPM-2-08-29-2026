@@ -541,13 +541,21 @@ class MainWindow(QMainWindow):
                 project.tree_view.jump_to_node_id(task_id)
                 return
 
+    def _identity_flag_overlaps(self, identity_id):
+        """Metadata checkbox is the authority for Story overlap drawing."""
+        from utils.identity_story import identity_flag_overlaps
+        from utils.template_catalog import load_templates
+        return identity_flag_overlaps(
+            identity_id, load_templates(), self.resource_definitions)
+
     def open_identity_story(self, identity_id, label, kind):
         """Open the reusable Story view from an identity chip."""
         from ui.identity_story_panel import IdentityStoryDialog
         from utils.identity_story import build_identity_story
         story = build_identity_story(
             self._resource_projects(), identity_id,
-            identity_label=label, identity_kind=kind)
+            identity_label=label, identity_kind=kind,
+            include_overlaps=self._identity_flag_overlaps(identity_id))
         dialog = IdentityStoryDialog(story, self)
         dialog.jumpRequested.connect(self._jump_to_project_task)
         usage_logger.timed_exec(dialog, "identity_story")

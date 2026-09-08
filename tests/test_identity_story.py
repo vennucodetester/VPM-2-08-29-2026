@@ -3,7 +3,7 @@ import unittest
 from models.task_node import TaskNode
 from utils.identity_story import (
     build_identity_story, event_context_label, find_duplicate_identities,
-    merge_identity_ids, shortest_unique_event_labels,
+    identity_flag_overlaps, merge_identity_ids, shortest_unique_event_labels,
 )
 
 
@@ -167,9 +167,30 @@ class IdentityStoryTests(unittest.TestCase):
         story = build_identity_story([project("P", "P", [first, second, later])],
                                      "case-1")
         self.assertEqual(1, len(story.overlaps))
+        self.assertTrue(story.overlaps_enabled)
         self.assertEqual(("2026-09-05", "2026-09-10"),
                          (story.overlaps[0].overlap_start,
                           story.overlaps[0].overlap_end))
+
+    def test_unchecked_overlap_flag_skips_overlap_records(self):
+        selected = token("doe-1", "DOE - Type 2", "activity")
+        first = task("First", "2026-09-01", "2026-09-10", [selected])
+        second = task("Second", "2026-09-05", "2026-09-12", [selected])
+        story = build_identity_story(
+            [project("P", "P", [first, second])], "doe-1",
+            include_overlaps=False)
+        self.assertEqual(2, len(story.events))
+        self.assertEqual([], story.overlaps)
+        self.assertFalse(story.overlaps_enabled)
+        self.assertFalse(identity_flag_overlaps(
+            "doe-1", [{"id": "doe-1", "flag_overlaps": False}]))
+        self.assertTrue(identity_flag_overlaps(
+            "doe-1", [{"id": "doe-1", "flag_overlaps": True}]))
+        self.assertFalse(identity_flag_overlaps("missing"))
+        self.assertFalse(identity_flag_overlaps(
+            "doe-1",
+            [{"id": "doe-1", "name": "DOE - Type 2"}],
+            [{"id": "doe-1", "conflict_enabled": True}]))
 
     def test_parent_and_descendant_do_not_overlap_each_other(self):
         selected = token("case-1", "Case")
