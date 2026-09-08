@@ -124,29 +124,34 @@ class IdentityStoryTests(unittest.TestCase):
 
     def test_same_leaf_name_keeps_sibling_parent_depth(self):
         selected = token("doe-1", "DOE - Type 2", "activity")
-        first_root = task("CAP Tube testing - MT (Room 7)",
-                          "2026-08-01", "2026-10-31")
-        first_lab = task("Lab Testing", "2026-08-31", "2026-09-18",
-                         parent=first_root)
-        first = task("DOE - Type 2", "2026-08-31", "2026-09-18",
-                     [selected], parent=first_lab)
-        first_root.children = [first_lab]
-        first_lab.children = [first]
-        second_root = task("Low Torque compressor - MT",
-                           "2026-08-01", "2026-10-31")
-        second_lab = task("[Lab Testing] - no clear timeline yet",
-                          "2026-09-20", "2026-10-05", parent=second_root)
-        second = task("DOE - Type 2", "2026-09-20", "2026-10-05",
-                      [selected], parent=second_lab)
-        second_root.children = [second_lab]
-        second_lab.children = [second]
+        roots = []
+        for name, start, end in (
+                ("CAP Tube testing - MT (Room 7)",
+                 "2026-08-31", "2026-09-18"),
+                ("Low Torque compressor - MT",
+                 "2026-09-01", "2026-09-20"),
+        ):
+            activity = task(name, "2026-08-01", "2026-10-31")
+            lab = task("Lab Testing", start, end, parent=activity)
+            doe = task("DOE - Type 2", start, end, [selected], parent=lab)
+            activity.children = [lab]
+            lab.children = [doe]
+            roots.append(activity)
+        unique_activity = task("LT Aluminum coil", "2026-08-01", "2026-10-31")
+        unique_lab = task("[Lab Testing] - no clear timeline yet",
+                          "2026-09-20", "2026-10-05", parent=unique_activity)
+        unique_doe = task("DOE - Type 2", "2026-09-20", "2026-10-05",
+                          [selected], parent=unique_lab)
+        unique_activity.children = [unique_lab]
+        unique_lab.children = [unique_doe]
+        roots.append(unique_activity)
         story = build_identity_story(
-            [project("P", "VAVE-MB 2.0", [first_root, second_root])],
-            "doe-1")
+            [project("P", "VAVE-MB 2.0", roots)], "doe-1")
         self.assertEqual({
             "CAP Tube testing - MT (Room 7) › Lab Testing › DOE - Type 2",
-            ("Low Torque compressor - MT › "
-             "[Lab Testing] - no clear timeline yet › DOE - Type 2"),
+            "Low Torque compressor - MT › Lab Testing › DOE - Type 2",
+            ("LT Aluminum coil › [Lab Testing] - no clear timeline yet › "
+             "DOE - Type 2"),
         }, set(shortest_unique_event_labels(story.events).values()))
 
     def test_parent_leaf_completed_undated_and_cross_project_collection(self):
