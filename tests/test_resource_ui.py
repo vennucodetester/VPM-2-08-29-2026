@@ -1,4 +1,5 @@
 import unittest
+import os
 from unittest.mock import patch
 
 from PyQt6.QtCore import Qt
@@ -306,6 +307,56 @@ class ResourceUiTests(unittest.TestCase):
             window.unsaved_changes = False
             window.close()
 
+    def test_metadata_rename_rebuilds_legacy_resource_projection(self):
+        with patch.object(MainWindow, "_restore_startup_state", return_value=True):
+            window = MainWindow()
+        first = {"id": "room-one", "label": "Old Room", "kind": "room"}
+        second = {"id": "room-two", "label": "Other Room", "kind": "room"}
+        node = TaskNode("Scheduled work")
+        node.start_date = node.end_date = "2026-09-01"
+        node.task_tokens = [dict(first), dict(second)]
+        node.resources = {"room": "Old Room", "legacy-kind": "Keep Me"}
+        try:
+            project = window._add_project_from_data("P", {}, [node], project_id="P")
+            project.reset_history_baseline()
+
+            count = window._sync_tasks_to_metadata([
+                {"id": "room-one", "name": "New Room", "kind": "room"},
+                {"id": "room-two", "name": "Other Room", "kind": "room"},
+            ])
+
+            current = project.tree_view.root_nodes[0]
+            self.assertEqual(1, count)
+            self.assertEqual(["room-one", "room-two"],
+                             [token["id"] for token in current.task_tokens])
+            self.assertEqual(["New Room", "Other Room"],
+                             [token["label"] for token in current.task_tokens])
+            self.assertEqual({"room": "Other Room", "legacy-kind": "Keep Me"},
+                             current.resources)
+            assignments = analyze_projects(
+                [_project("P", "P", [current])], attach=False).assignments
+            self.assertEqual({("room-one", "New Room"),
+                              ("room-two", "Other Room"),
+                              ("legacy:legacy-kind:keep me", "Keep Me")},
+                             {(value.resource_id, value.resource_label)
+                              for value in assignments})
+
+            reloaded = TaskNode.from_dict(current.to_dict())
+            self.assertEqual(current.task_tokens, reloaded.task_tokens)
+            self.assertEqual(current.resources, reloaded.resources)
+
+            project.undo()
+            restored = project.tree_view.root_nodes[0]
+            self.assertEqual("Old Room", restored.task_tokens[0]["label"])
+            self.assertEqual("Old Room", restored.resources["room"])
+            project.redo()
+            redone = project.tree_view.root_nodes[0]
+            self.assertEqual("New Room", redone.task_tokens[0]["label"])
+            self.assertEqual("Other Room", redone.resources["room"])
+        finally:
+            window.unsaved_changes = False
+            window.close()
+
     def test_inactive_resource_is_hidden_from_picker_but_existing_use_is_audited(self):
         from ui.tree_grid_view import TreeGridView
         from utils.resource_allocation import legacy_resource_id
@@ -343,6 +394,173 @@ class ResourceUiTests(unittest.TestCase):
             self.assertEqual("[Old Case] Original work",
                              project.tree_view.topLevelItem(0).text(0))
         finally:
+            window.unsaved_changes = False
+            window.close()
+
+    def test_f05_empty_local_metadata_preserves_document_conflict_enabled(self):
+        with patch.object(MainWindow, "_restore_startup_state", return_value=True):
+            window = MainWindow()
+        window._metadata_resource_definitions = lambda: []
+        window.resource_definitions = [
+            {"id": "room-1", "type": "room", "label": "Room 1", "capacity": 1,
+             "conflict_enabled": True, "active": True}
+        ]
+        first = _task("A", "2026-09-01", "2026-09-03", "1")
+        second = _task("B", "2026-09-02", "2026-09-04", "1")
+        try:
+            window._add_project_from_data("P", {}, [first, second], project_id="P")
+            result = window.recheck_resource_conflicts()
+            # Must preserve conflict_enabled=True and report the overlap conflict
+            room_def = next(d for d in result.definitions if d.id == "room-1")
+            self.assertTrue(room_def.conflict_enabled)
+            room_conflicts = [c for c in result.conflicts if c.resource_id == "room-1"]
+            self.assertEqual(1, len(room_conflicts))
+            self.assertEqual(2, room_conflicts[0].overlap_workdays)
+        finally:
+            window.unsaved_changes = False
+            window.close()
+
+    def test_f06_inactive_definitions_not_reintroduced_into_lists(self):
+        with patch.object(MainWindow, "_restore_startup_state", return_value=True):
+            window = MainWindow()
+        window.resource_definitions = [
+            {"id": "room-del", "type": "room", "label": "Deleted Room", "capacity": 1,
+             "conflict_enabled": True, "active": False}
+        ]
+        captured_templates = []
+        def mock_dialog(templates, **kwargs):
+            captured_templates.extend(templates)
+            from unittest.mock import MagicMock
+            d = MagicMock()
+            d.result_items.return_value = []
+            return d
+
+        with patch("utils.template_catalog.load_templates", return_value=[]), \
+             patch("ui.metadata_editor.MetadataEditorDialog", side_effect=mock_dialog), \
+             patch("ui.main_window.usage_logger.timed_exec", return_value=False):
+            window.open_template_manager()
+
+        self.assertFalse(any(t.get("id") == "room-del" for t in captured_templates))
+        window.unsaved_changes = False
+        window.close()
+
+    def test_f10_independent_recoveries_not_dismissed_by_newer_decision(self):
+        import tempfile
+        from utils.vpmt_io import save_projects
+
+        with tempfile.TemporaryDirectory() as folder:
+            rec_new = os.path.join(folder, "recovery-new-1234.vpmt")
+            rec_old = os.path.join(folder, "recovery-old-5678.vpmt")
+            task_new = _task("New Recovery", "2026-09-01", "2026-09-02", "1")
+            task_old = _task("Old Recovery", "2026-09-01", "2026-09-02", "2")
+            save_projects([_project("P1", "P1", [task_new])], rec_new)
+            save_projects([_project("P2", "P2", [task_old])], rec_old)
+
+            os.utime(rec_old, (1000.0, 1000.0))
+            os.utime(rec_new, (2000.0, 2000.0))
+
+            fake_settings = {}
+            class IsolatedSettings:
+                def value(self, key, default=None):
+                    return fake_settings.get(key, default)
+                def setValue(self, key, val):
+                    fake_settings[key] = val
+
+            # Session 1: Both candidates offered independently; user declines rec_new, accepts rec_old
+            with patch.object(MainWindow, "_restore_startup_state", return_value=True):
+                window = MainWindow()
+            window.settings = IsolatedSettings()
+            window._recent_files = lambda: []
+            window._loading_startup = True
+            window._recovery_candidates = lambda: [rec_new, rec_old]
+
+            dialog_answers = [QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes]
+            with patch("ui.main_window.QMessageBox.question", side_effect=dialog_answers) as mock_q:
+                restored = MainWindow._restore_startup_state(window)
+                self.assertTrue(restored)
+                self.assertEqual(2, mock_q.call_count)
+                self.assertEqual("P2", window.all_projects()[0].project_id)
+            window.unsaved_changes = False
+            window.close()
+
+            # Session 2: If rec_new was handled, older rec_old is NOT dismissed if it hasn't been handled yet
+            fake_settings.clear()
+            fake_settings["recovery_handled_map"] = {"recovery-new-1234.vpmt": 2000.0}
+
+            with patch.object(MainWindow, "_restore_startup_state", return_value=True):
+                window2 = MainWindow()
+            window2.settings = IsolatedSettings()
+            window2._recent_files = lambda: []
+            window2._loading_startup = True
+            window2._recovery_candidates = lambda: [rec_new, rec_old]
+
+            with patch("ui.main_window.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes) as mock_q2:
+                restored2 = MainWindow._restore_startup_state(window2)
+                self.assertTrue(restored2)
+                self.assertEqual(1, mock_q2.call_count)
+                self.assertEqual("P2", window2.all_projects()[0].project_id)
+            window2.unsaved_changes = False
+            window2.close()
+
+            # Session 3: Failed load does not mark recovery handled
+            rec_bad = os.path.join(folder, "corrupt.vpmt")
+            with open(rec_bad, "w") as f:
+                f.write("corrupt")
+            fake_settings.clear()
+
+            with patch.object(MainWindow, "_restore_startup_state", return_value=True):
+                window3 = MainWindow()
+            window3.settings = IsolatedSettings()
+            window3._recent_files = lambda: []
+            window3._loading_startup = True
+            window3._recovery_candidates = lambda: [rec_bad]
+
+            with patch("ui.main_window.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes), \
+                 patch("ui.main_window.QMessageBox.critical"):
+                restored3 = MainWindow._restore_startup_state(window3)
+                self.assertFalse(restored3)
+                self.assertNotIn("corrupt.vpmt", fake_settings.get("recovery_handled_map", {}))
+            window3.unsaved_changes = False
+            window3.close()
+
+    def test_f11_external_change_autosave_preserves_original_and_saves_emergency_recovery(self):
+        import tempfile
+        from utils.vpmt_io import save_projects, load_projects
+
+        with tempfile.TemporaryDirectory() as folder:
+            original_file = os.path.join(folder, "original.vpmt")
+            rec_file = os.path.join(folder, "emergency_recovery.vpmt")
+            init_task = _task("Initial", "2026-09-01", "2026-09-02", "1")
+            save_projects([_project("P", "P", [init_task])], original_file)
+
+            with patch.object(MainWindow, "_restore_startup_state", return_value=True):
+                window = MainWindow()
+
+            window._recovery_path = lambda: rec_file
+            window.current_filepath = original_file
+            # Simulate project loaded
+            window._add_project_from_data("P", {}, [init_task], project_id="P")
+            # In-memory edit
+            window.all_projects()[0].tree_view.root_nodes[0].name = "Modified In Memory"
+            window.unsaved_changes = True
+
+            # Mock file_guard to report external change
+            window.file_guard.changed_on_disk = lambda: True
+
+            window._autosave()
+
+            # 1. Original file must be completely untouched
+            loaded_orig = load_projects(original_file)
+            self.assertEqual("Initial", loaded_orig[0]["roots"][0].name)
+
+            # 2. Recovery file must have been created and contain the pending edit
+            self.assertTrue(os.path.exists(rec_file))
+            loaded_rec = load_projects(rec_file)
+            self.assertEqual("Modified In Memory", loaded_rec[0]["roots"][0].name)
+
+            # 3. Status bar discloses emergency recovery
+            self.assertIn("emergency recovery snapshot saved", window.statusBar().currentMessage())
+
             window.unsaved_changes = False
             window.close()
 

@@ -42,6 +42,96 @@ class RoadmapFeatureTests(unittest.TestCase):
         finally:
             dialog.close()
 
+    def test_note_edit_marks_project_dirty_before_history_debounce(self):
+        project = ProjectWidget("Notes", {}, [])
+        changed = []
+        project.project_changed.connect(lambda: changed.append(True))
+        try:
+            project.notes_panel.editor.insertPlainText("new note")
+            self.assertTrue(project.notes_panel._debounce.isActive())
+            self.assertTrue(changed)
+        finally:
+            project.notes_panel._debounce.stop()
+            project.close()
+
+    def test_f08_multi_task_cut_single_undo(self):
+        a = TaskNode("Task A")
+        a1 = TaskNode("Task A1", parent=a)
+        a.add_child(a1)
+        b = TaskNode("Task B")
+        b.start_rule = {"mode": "same_as", "task_id": a.id, "field": "start"}
+        c = TaskNode("Task C")
+
+        project = ProjectWidget("P", {}, [a, b, c])
+        try:
+            tree = project.tree_view
+            item_a = tree.topLevelItem(0)
+            item_b = tree.topLevelItem(1)
+
+            self.assertEqual(3, len(tree.root_nodes))
+            tree.clearSelection()
+            item_a.setSelected(True)
+            item_b.setSelected(True)
+
+            tree.cut_selected_tasks()
+
+            self.assertEqual(1, len(tree.root_nodes))
+            self.assertEqual("Task C", tree.root_nodes[0].name)
+
+            project.undo()
+            self.assertEqual(3, len(tree.root_nodes))
+            names = [n.name for n in tree.root_nodes]
+            self.assertEqual(["Task A", "Task B", "Task C"], names)
+            restored_a = tree.root_nodes[0]
+            restored_b = tree.root_nodes[1]
+            self.assertEqual(1, len(restored_a.children))
+            self.assertEqual("Task A1", restored_a.children[0].name)
+            self.assertEqual(restored_a.id, restored_b.start_rule.get("task_id"))
+
+            project.redo()
+            self.assertEqual(1, len(tree.root_nodes))
+            self.assertEqual("Task C", tree.root_nodes[0].name)
+        finally:
+            project.close()
+
+    def test_paste_remaps_same_as_start_and_end_rules(self):
+        first = TaskNode("Source")
+        second = TaskNode("Linked")
+        second.start_rule = {"mode": "same_as", "task_id": first.id,
+                             "field": "start"}
+        second.end_rule = {"mode": "same_as", "task_id": first.id,
+                           "field": "end"}
+        tree = TreeGridView()
+        try:
+            tree.load_project([first, second])
+            TreeGridView._task_clipboard = [first.to_dict(), second.to_dict()]
+            tree.paste_tasks()
+            copied_source, copied_link = tree.root_nodes[-2:]
+            self.assertEqual(copied_source.id,
+                             copied_link.start_rule["task_id"])
+            self.assertEqual(copied_source.id,
+                             copied_link.end_rule["task_id"])
+        finally:
+            tree.close()
+
+    def test_delete_clears_all_date_rules_targeting_removed_task(self):
+        source = TaskNode("Source")
+        linked = TaskNode("Linked")
+        linked.start_rule = {"mode": "same_as", "task_id": source.id,
+                             "field": "start"}
+        linked.end_rule = {"mode": "same_as", "task_id": source.id,
+                           "field": "end"}
+        tree = TreeGridView()
+        try:
+            tree.load_project([source, linked])
+            tree.delete_task(tree.topLevelItem(0))
+            self.assertEqual("automatic", linked.start_rule["mode"])
+            self.assertEqual("duration", linked.end_rule["mode"])
+            self.assertNotIn("task_id", linked.start_rule)
+            self.assertNotIn("task_id", linked.end_rule)
+        finally:
+            tree.close()
+
     def test_template_catalog_and_inline_picker_include_phases_tests_campaign(self):
         kinds = {item["kind"] for item in load_templates()}
         self.assertTrue({"phase", "activity", "campaign"} <= kinds)
@@ -640,6 +730,312 @@ class RoadmapFeatureTests(unittest.TestCase):
             window.unsaved_changes = False
             window.file_guard.release()
             window.close()
+
+
+    def test_d2_reopened_unsupported_json_raises_value_error(self):
+        from ui.main_window import MainWindow
+        with tempfile.NamedTemporaryFile(suffix=".vpmt", delete=False, mode="w", encoding="utf-8") as tf:
+            tf.write('{"unexpected": "not a project"}')
+            bad_path = tf.name
+        try:
+            with self.assertRaises(ValueError):
+                load_projects(bad_path)
+
+            # Test MainWindow preserves tabs on bad load
+            with patch.object(MainWindow, "_restore_startup_state", return_value=False):
+                window = MainWindow()
+            try:
+                window._add_project_from_data("Existing", {}, [TaskNode("KeepMe")])
+                initial_count = window.project_tabs.count()
+                with patch("ui.main_window.QMessageBox.critical"):
+                    ok = window._load_path(bad_path, prompt_unsaved=False)
+                self.assertFalse(ok)
+                self.assertEqual(initial_count, window.project_tabs.count())
+                self.assertEqual("Existing", window.active_project().name)
+            finally:
+                window.unsaved_changes = False
+                window.file_guard.release()
+                window.close()
+        finally:
+            if os.path.exists(bad_path):
+                os.remove(bad_path)
+
+    def test_f17_undo_settles_pending_notes_before_reversing_tasks(self):
+        project = ProjectWidget("NotesTest", {}, [])
+        project.load_snapshot({"name": "NotesTest", "tasks": [{"id": "1", "name": "Task A", "start": "2026-07-01", "end": "2026-07-05", "color": "#ffffff"}]})
+        project.reset_history_baseline()
+        try:
+            # Edit task name to Task B
+            project.tree_view.model().setData(project.tree_view.model().index(0, 0), "Task B")
+            self.assertEqual("Task B", project.tree_view.root_nodes[0].name)
+
+            # Type into notes panel without waiting for 900ms debounce
+            project.notes_panel.editor.insertPlainText("Important note")
+            self.assertTrue(project.notes_panel._debounce.isActive())
+
+            # First undo should undo the pending notes, NOT the task rename
+            project.undo()
+            self.assertFalse(project.notes_panel._debounce.isActive())
+            self.assertEqual("Task B", project.tree_view.root_nodes[0].name)
+            self.assertEqual("", project.notes_panel.plain_text().strip())
+
+            # Second undo should undo the task rename
+            project.undo()
+            self.assertEqual("Task A", project.tree_view.root_nodes[0].name)
+        finally:
+            project.close()
+
+    def test_f18_critical_path_fixed_siblings_no_invented_predecessors(self):
+        from utils.critical_path import CriticalPathAnalyzer
+        parent = TaskNode("Parent")
+        a = TaskNode("A", parent=parent)
+        a.start_rule = {"mode": "fixed", "date": "2026-09-07"}
+        a.end_rule = {"mode": "duration", "days": 5}
+
+        b = TaskNode("B", parent=parent)
+        b.start_rule = {"mode": "fixed", "date": "2026-09-07"}
+        b.end_rule = {"mode": "duration", "days": 1}
+
+        parent.children = [a, b]
+        schedule([parent])
+
+        analyzer = CriticalPathAnalyzer([parent])
+        self.assertEqual([], analyzer._get_predecessors(b))
+
+        results = analyzer.analyze()
+        self.assertEqual("2026-09-07", results["early_start"][b.id].strftime("%Y-%m-%d"))
+        self.assertEqual(0, results["slack"][a.id])
+        self.assertEqual(4, results["slack"][b.id])
+        self.assertIn(a.id, results["critical_path_ids"])
+        self.assertNotIn(b.id, results["critical_path_ids"])
+
+    def test_f19_focus_view_escapes_html_task_names(self):
+        from ui.focus_view import _link
+        from PyQt6.QtGui import QTextDocument
+        t = TaskNode("Test <case> & verify")
+        link_html = _link(t)
+        self.assertIn("&lt;case&gt;", link_html)
+        self.assertIn("&amp;", link_html)
+
+        doc = QTextDocument()
+        doc.setHtml(link_html)
+        self.assertEqual("Test <case> & verify", doc.toPlainText())
+
+    def test_f20_successful_save_as_retires_recovery_file(self):
+        from ui.main_window import MainWindow
+        with patch.object(MainWindow, "_restore_startup_state", return_value=False):
+            window = MainWindow()
+        try:
+            window.current_filepath = None
+            window._session_recovery_path = None
+            window._add_project_from_data("Test", {}, [TaskNode("Node")])
+            window.unsaved_changes = True
+            window._autosave()
+            rec_path = window._session_recovery_path
+            self.assertIsNotNone(rec_path)
+            self.assertTrue(os.path.exists(rec_path))
+
+            with tempfile.NamedTemporaryFile(suffix=".vpmt", delete=False) as tf:
+                target_path = tf.name
+
+            try:
+                with patch("ui.main_window.QFileDialog.getSaveFileName", return_value=(target_path, "")):
+                    window.save_project_file_as()
+
+                self.assertTrue(os.path.exists(target_path))
+                self.assertFalse(window.unsaved_changes)
+                self.assertFalse(os.path.exists(rec_path))
+                self.assertIn(os.path.basename(rec_path), window._handled_recoveries())
+                self.assertNotIn(rec_path, window._recovery_candidates())
+            finally:
+                if os.path.exists(target_path):
+                    os.remove(target_path)
+        finally:
+            window.unsaved_changes = False
+            window.file_guard.release()
+            window.close()
+
+
+    def test_f21_focus_view_driver_chains_respect_fixed_and_same_as(self):
+        from ui.focus_view import FocusView
+        from models.task_node import TaskNode
+
+        fv = FocusView()
+        parent = TaskNode("Parent")
+        child_a = TaskNode("Task A")
+        child_a.start_rule = {"mode": "automatic"}
+        child_b = TaskNode("Task B (Fixed)")
+        child_b.start_rule = {"mode": "fixed", "date": "2026-09-10"}
+        child_c = TaskNode("Task C (Same As B)")
+        child_c.start_rule = {"mode": "same_as", "task_id": child_b.id}
+        child_d = TaskNode("Task D (Parallel)")
+        child_d.is_parallel = True
+        child_d.start_rule = {"mode": "automatic"}
+
+        parent.children = [child_a, child_b, child_c, child_d]
+        for c in parent.children:
+            c.parent = parent
+        fv.root_nodes = [parent]
+        node_map = {n.id: n for n in [parent, child_a, child_b, child_c, child_d]}
+
+        # Child A: automatic, first child -> drivers from parent
+        self.assertIsNone(fv._driver_of(child_a, node_map))
+        # Child B: fixed -> no driver
+        self.assertIsNone(fv._driver_of(child_b, node_map))
+        # Child C: same as B -> driver is B
+        self.assertEqual(fv._driver_of(child_c, node_map), child_b)
+        # Child D: parallel -> driver is parent driver (None here)
+        self.assertIsNone(fv._driver_of(child_d, node_map))
+
+    def test_f22_refresh_all_restores_active_project(self):
+        from ui.main_window import MainWindow
+        from utils.config_manager import ConfigManager
+        from models.task_node import TaskNode
+
+        with patch.object(MainWindow, "_restore_startup_state", return_value=False):
+            window = MainWindow()
+        try:
+            window._add_project_from_data("Proj1", {"holidays": ["2026-12-25"]}, [TaskNode("P1Task")])
+            window._add_project_from_data("Proj2", {"holidays": ["2026-01-01"]}, [TaskNode("P2Task")])
+            p1 = window.project_tabs.widget(0)
+            p2 = window.project_tabs.widget(1)
+            window.project_tabs.setCurrentWidget(p1)
+            p1.activate()
+            self.assertEqual(ConfigManager.active_project_id(), p1.project_id)
+
+            window._refresh_all()
+
+            # Active project must be restored to p1, not leaked from p2
+            self.assertEqual(ConfigManager.active_project_id(), p1.project_id)
+            self.assertEqual(window.active_project(), p1)
+        finally:
+            window.unsaved_changes = False
+            window.file_guard.release()
+            window.close()
+
+    def test_f23_vave_data_health_ignores_execution_only_tasks(self):
+        from ui.main_window import MainWindow
+        from models.task_node import TaskNode
+
+        with patch.object(MainWindow, "_restore_startup_state", return_value=False):
+            window = MainWindow()
+        try:
+            exec_task = TaskNode("Execution Only")
+            exec_task.status = "Completed"
+            exec_task.vave_potential = None
+            exec_task.vave_realized = None
+            exec_task.savings_disposition = ""
+
+            savings_task = TaskNode("With Savings")
+            savings_task.status = "Completed"
+            savings_task.vave_potential = 5000
+            savings_task.vave_realized = None
+            savings_task.savings_disposition = ""
+
+            window._add_project_from_data("VAVE Proj", {"is_vave": True}, [exec_task, savings_task])
+            proj = window.active_project()
+            proj.is_vave = True
+
+            issues = [issue for issue, node in window._data_health_issues()]
+            vave_issues = [i for i in issues if "savings disposition" in i]
+
+            # Only savings_task should be flagged, not exec_task
+            self.assertEqual(1, len(vave_issues))
+        finally:
+            window.unsaved_changes = False
+            window.file_guard.release()
+            window.close()
+
+    def test_f24_data_health_flags_broken_dependencies(self):
+        from ui.main_window import MainWindow
+        from models.task_node import TaskNode
+
+        with patch.object(MainWindow, "_restore_startup_state", return_value=False):
+            window = MainWindow()
+        try:
+            broken_start = TaskNode("Broken Start")
+            broken_start.start_rule = {"mode": "continue_after", "task_id": "nonexistent-123"}
+
+            broken_end = TaskNode("Broken End")
+            broken_end.end_rule = {"mode": "same_as", "task_id": "nonexistent-456"}
+
+            window._add_project_from_data("Test Proj", {}, [broken_start, broken_end])
+            issues = [issue for issue, node in window._data_health_issues()]
+
+            self.assertIn("Task start depends on a missing task", issues)
+            self.assertIn("Task end depends on a missing task", issues)
+        finally:
+            window.unsaved_changes = False
+            window.file_guard.release()
+            window.close()
+
+    def test_f25_metadata_editor_raises_for_invalid_durations(self):
+        from ui.metadata_editor import MetadataEditorDialog
+
+        dialog = MetadataEditorDialog([
+            {"id": "h1", "name": "Lists", "kind": "resource", "header": "Resource Lists", "version": 1}
+        ])
+        table = dialog.tabs.widget(0)
+        table.setRowCount(1)
+        from PyQt6.QtWidgets import QTableWidgetItem
+        table.setItem(0, 0, QTableWidgetItem("Item 1"))
+        table.setItem(0, 1, QTableWidgetItem("not-a-number"))
+
+        with self.assertRaises(ValueError) as ctx:
+            dialog.result_items()
+        self.assertIn("Duration must be a positive integer", str(ctx.exception))
+
+        # Also test 0 or negative
+        table.setItem(0, 1, QTableWidgetItem("0"))
+        with self.assertRaises(ValueError) as ctx:
+            dialog.result_items()
+        self.assertIn("Duration must be a positive integer", str(ctx.exception))
+
+    def test_f26_gantt_predecessor_and_trace_respect_fixed_and_same_as(self):
+        from ui.gantt_chart import GanttTimeline, GanttChartWidget
+        from models.task_node import TaskNode
+
+        timeline = GanttTimeline()
+        parent = TaskNode("Parent")
+        a = TaskNode("Task A")
+        b = TaskNode("Task B Fixed")
+        b.start_rule = {"mode": "fixed", "date": "2026-09-08"}
+        c = TaskNode("Task C Same As A")
+        c.start_rule = {"mode": "same_as", "task_id": a.id}
+
+        parent.children = [a, b, c]
+        for ch in parent.children:
+            ch.parent = parent
+        timeline.node_map = {n.id: n for n in [parent, a, b, c]}
+
+        # In Gantt timeline:
+        self.assertIsNone(timeline._find_predecessor(b))
+        self.assertEqual(timeline._find_predecessor(c), a)
+
+        # In GanttChartWidget trace:
+        widget = GanttChartWidget()
+        widget.node_map = timeline.node_map
+        widget.slack_data = {}
+        trace = widget._compute_trace(b)
+        # Trace for fixed task B should only contain B, not link back to A or Parent
+        self.assertEqual(1, len(trace))
+        self.assertEqual(trace[0]["task"], b)
+
+    def test_f27_resource_usage_next_weekday_respects_holidays_and_weekends(self):
+        from ui.resource_usage_dialog import _next_weekday
+
+        # Friday Sept 4, 2026. Monday Sept 7 is holiday. Next workday should be Tuesday Sept 8.
+        res = _next_weekday("2026-09-04", holidays=["2026-09-07"], exclude_weekends=True)
+        self.assertEqual("2026-09-08", res)
+
+        # When weekends are NOT excluded, next day after Friday Sept 4 is Saturday Sept 5
+        res_we = _next_weekday("2026-09-04", exclude_weekends=False)
+        self.assertEqual("2026-09-05", res_we)
+
+        # Invalid date
+        self.assertEqual("—", _next_weekday("invalid-date"))
+        self.assertEqual("—", _next_weekday(None))
+        self.assertEqual("—", _next_weekday(""))
 
 
 if __name__ == "__main__":

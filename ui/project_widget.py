@@ -165,6 +165,7 @@ class ProjectWidget(QWidget):
         # flow into the same undo history as task changes.
         self.tree_view.note_consumed.connect(self._on_note_consumed)
         self.notes_panel.notes_changed.connect(self._on_notes_changed)
+        self.notes_panel.notes_edited.connect(self._on_notes_edited)
         self.notes_panel.make_tasks_requested.connect(self._make_tasks_from_notes)
 
         self.gantt_view = FocusView()  # name kept so callers don't change
@@ -227,6 +228,7 @@ class ProjectWidget(QWidget):
         panel = NotesPanel()
         panel.set_html(html)
         panel.notes_changed.connect(self._on_notes_changed)
+        panel.notes_edited.connect(self._on_notes_edited)
         panel.make_tasks_requested.connect(self._make_tasks_from_notes)
         self.custom_note_panels.append(panel)
         self.notes_tabs.addTab(panel, (name or "Notes").strip())
@@ -406,7 +408,20 @@ class ProjectWidget(QWidget):
         self._last_snapshot = self.get_snapshot()
         self._update_vave_totals()
 
+    def _settle_pending_notes(self):
+        """Flush any debounced note edits into history before undo/redo."""
+        panels = [self.notes_panel]
+        if hasattr(self, "custom_note_panels"):
+            panels.extend(self.custom_note_panels)
+        for panel in panels:
+            if hasattr(panel, "flush"):
+                panel.flush()
+            elif hasattr(panel, "_debounce") and panel._debounce.isActive():
+                panel._debounce.stop()
+                panel.notes_changed.emit()
+
     def undo(self):
+        self._settle_pending_notes()
         if not self.history.can_undo():
             return
         current = self.get_snapshot()
@@ -418,6 +433,7 @@ class ProjectWidget(QWidget):
             self.project_changed.emit()
 
     def redo(self):
+        self._settle_pending_notes()
         if not self.history.can_redo():
             return
         current = self.get_snapshot()
@@ -473,6 +489,10 @@ class ProjectWidget(QWidget):
             self.notes_panel.remove_line(raw)
         finally:
             self._suppress_notes_history = False
+
+    def _on_notes_edited(self):
+        if not self._restoring:
+            self.project_changed.emit()
 
     def _on_notes_changed(self):
         """Pad edits (add / edit / delete a line) are undoable too — they go

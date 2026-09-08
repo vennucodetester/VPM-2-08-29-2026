@@ -25,6 +25,7 @@ class NotesPanel(QWidget):
     """Rich-text notepad: formatting toolbar + one QTextEdit note."""
 
     notes_changed = pyqtSignal()
+    notes_edited = pyqtSignal()
     make_tasks_requested = pyqtSignal(list)  # list[str] lines -> tasks
 
     def __init__(self, parent=None):
@@ -77,6 +78,7 @@ class NotesPanel(QWidget):
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(900)
         self._debounce.timeout.connect(self.notes_changed.emit)
+        self.editor.textChanged.connect(self.notes_edited.emit)
         self.editor.textChanged.connect(self._debounce.start)
         self.editor.currentCharFormatChanged.connect(self._sync_buttons)
 
@@ -149,6 +151,12 @@ class NotesPanel(QWidget):
                  if l.strip()]
         if lines:
             self.make_tasks_requested.emit(lines)
+
+    def flush(self):
+        """If a debounced text change is pending, cancel the timer and emit notes_changed now."""
+        if hasattr(self, "_debounce") and self._debounce.isActive():
+            self._debounce.stop()
+            self.notes_changed.emit()
 
     # ---- focus ----
     def focus_capture(self):

@@ -20,8 +20,15 @@ def _normal(value) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip().casefold())
 
 
+def canonical_resource_kind(kind: str) -> str:
+    k = _normal(kind)
+    if k in {"article", "cassette", "test article", "test_article"}:
+        return "cassette"
+    return k
+
+
 def legacy_resource_id(kind, label) -> str:
-    return f"legacy:{_normal(kind)}:{_normal(label)}"
+    return f"legacy:{_normal(canonical_resource_kind(kind))}:{_normal(label)}"
 
 
 @dataclass(frozen=True)
@@ -74,6 +81,7 @@ class ResourceAssignment:
     occupied_dates: Tuple[str, ...]
     capacity_units: int = 1
     status: str = "Not Started"
+    ancestor_task_ids: Tuple[str, ...] = ()
 
     @property
     def workdays(self):
@@ -165,10 +173,11 @@ def _resource_tokens(node):
     """Return all stable token assignments, plus legacy resources if absent."""
     tokens = [dict(token) for token in (getattr(node, "task_tokens", None) or [])]
     represented = {
-        (_normal(token.get("kind")), _normal(token.get("label"))) for token in tokens
+        (canonical_resource_kind(token.get("kind")), _normal(token.get("label")))
+        for token in tokens
     }
     for kind, label in (getattr(node, "resources", None) or {}).items():
-        if not label or (_normal(kind), _normal(label)) in represented:
+        if not label or (canonical_resource_kind(kind), _normal(label)) in represented:
             continue
         tokens.append({"kind": kind, "label": label,
                        "id": legacy_resource_id(kind, label)})
@@ -179,7 +188,7 @@ def _resource_tokens(node):
         kind = str(token.get("kind") or "resource")
         label = str(token.get("label") or "").strip()
         resource_id = str(token.get("id") or legacy_resource_id(kind, label))
-        key = (kind.casefold(), resource_id)
+        key = (canonical_resource_kind(kind), resource_id)
         if label and key not in seen:
             seen.add(key)
             unique.append({**token, "kind": kind, "label": label,
@@ -219,7 +228,7 @@ def extract_assignments(projects, definitions=()) -> List[ResourceAssignment]:
         project_name = str(project.get("name") or "Project")
         holidays, exclude_weekends = _calendar(project)
         for node, path in _walk_project(project.get("roots", [])):
-            if node.children or not node.start_date or not node.end_date:
+            if not node.start_date or not node.end_date:
                 continue
             occupied = occupied_dates(node.start_date, node.end_date,
                                       holidays, exclude_weekends)
@@ -236,10 +245,16 @@ def extract_assignments(projects, definitions=()) -> List[ResourceAssignment]:
                 resource_id = token["id"]
                 assignment_id = hashlib.sha256(
                     f"{project_id}|{node.id}|{resource_id}".encode()).hexdigest()[:20]
+                ancestors = []
+                current = node.parent
+                while current is not None:
+                    ancestors.append(current.id)
+                    current = current.parent
                 assignments.append(ResourceAssignment(
                     assignment_id, project_id, project_name, node.id, node.name,
                     path, kind, resource_id, token["label"], location,
-                    node.start_date, node.end_date, occupied, 1, node.status))
+                    node.start_date, node.end_date, occupied, 1, node.status,
+                    tuple(ancestors)))
     return assignments
 
 
@@ -272,7 +287,15 @@ def analyze_projects(projects, definitions=(), resolutions=(), attach=True):
                 occupancy.setdefault(date, []).append(assignment)
         conflict_days = []
         for date in sorted(occupancy):
-            present = occupancy[date]
+            raw_present = occupancy[date]
+            # A child explicitly carrying its parent's same identity describes
+            # the same reservation, not another unit of capacity.
+            present = [assignment for assignment in raw_present
+                       if not any(
+                           other.project_id == assignment.project_id and
+                           other.task_id in assignment.ancestor_task_ids
+                           for other in raw_present)]
+            occupancy[date] = present
             if sum(a.capacity_units for a in present) > capacity:
                 conflict_days.append((date, tuple(sorted(
                     (a.id for a in present)))))
@@ -313,29 +336,32 @@ def attach_analysis(projects, result):
     nodes = {}
     assignments = {a.id: a for a in result.assignments}
     for project in projects or []:
+        project_id = str(project.get("id") or project.get("project_id") or "project")
         for node, _path in _walk_project(project.get("roots", [])):
-            nodes[node.id] = node
-            node.schedule_conflicts = []
+            nodes[(project_id, node.id)] = node
+            node.schedule_conflicts = [c for c in node.schedule_conflicts if "cycle" in c.lower()]
             node.resource_conflict_details = []
     for conflict in result.conflicts:
-        for task_id in conflict.task_ids:
-            node = nodes.get(task_id)
+        conflict_assignments = [assignments[a_id] for a_id in conflict.assignment_ids if a_id in assignments]
+        for a in conflict_assignments:
+            node = nodes.get((a.project_id, a.task_id))
             if node is None:
                 continue
-            others = [assignments[a_id] for a_id in conflict.assignment_ids
-                      if assignments[a_id].task_id != task_id]
+            others = [o for o in conflict_assignments
+                      if not (o.project_id == a.project_id and o.task_id == a.task_id)]
             other_text = "; ".join(
-                f"{a.task_path} · {a.location_label}" for a in others)
+                f"{o.task_path} · {o.location_label}" for o in others)
             state = "accepted" if conflict.resolution_state == "accepted" else "unresolved"
             text = (f"{conflict.resource_label}: {conflict.overlap_workdays} "
                     f"overlapping workday(s), {conflict.overlap_start} through "
                     f"{conflict.overlap_end} · {other_text} · {state}")
-            node.schedule_conflicts.append(text)
-            node.resource_conflict_details.append({
-                "conflict_id": conflict.id, "resource_id": conflict.resource_id,
-                "resource_label": conflict.resource_label,
-                "state": conflict.resolution_state, "text": text,
-            })
+            if text not in node.schedule_conflicts:
+                node.schedule_conflicts.append(text)
+                node.resource_conflict_details.append({
+                    "conflict_id": conflict.id, "resource_id": conflict.resource_id,
+                    "resource_label": conflict.resource_label,
+                    "state": conflict.resolution_state, "text": text,
+                })
 
 
 def accept_conflict(conflict, reason, timestamp=None):
@@ -352,13 +378,26 @@ def accept_conflict(conflict, reason, timestamp=None):
 def next_available_start(assignment, all_assignments, capacity=1,
                          holidays=(), exclude_weekends=True, max_days=3650):
     """Find the first later continuous work block; never applies the result."""
-    occupied_by_others = {}
+    others_by_date = {}
     for other in all_assignments:
-        if (other.resource_id != assignment.resource_id or
-                other.id == assignment.id):
+        if other.resource_id != assignment.resource_id or other.id == assignment.id:
+            continue
+        # Ancestor/descendant in same project sharing same reservation do not compete
+        if other.project_id == assignment.project_id and (
+            other.task_id in assignment.ancestor_task_ids or
+            assignment.task_id in getattr(other, "ancestor_task_ids", ())
+        ):
             continue
         for date in other.occupied_dates:
-            occupied_by_others[date] = occupied_by_others.get(date, 0) + other.capacity_units
+            others_by_date.setdefault(date, []).append(other)
+
+    occupied_by_others = {}
+    for date, raw_others in others_by_date.items():
+        present = [o for o in raw_others
+                   if not any(o2.project_id == o.project_id and o2.task_id in o.ancestor_task_ids
+                              for o2 in raw_others)]
+        occupied_by_others[date] = sum(o.capacity_units for o in present)
+
     needed = max(1, assignment.workdays)
     candidate = datetime.strptime(assignment.start_date, DATE_FMT) + timedelta(days=1)
     holidays = set(holidays or [])
@@ -385,47 +424,93 @@ def next_available_start(assignment, all_assignments, capacity=1,
 
 def next_available_block(task_assignments, all_assignments, definitions=(),
                          holidays=(), exclude_weekends=True, max_days=3650):
-    """Preview the first block available for every resource on one task."""
+    """Preview the first block available for every resource on one task or moved subtree."""
     task_assignments = list(task_assignments)
     if not task_assignments:
         return None
     defs = definition_map(definitions)
-    needed = max(value.workdays for value in task_assignments)
-    task_ids = {value.id for value in task_assignments}
-    relevant_ids = {value.resource_id for value in task_assignments}
-    occupancy = {resource_id: {} for resource_id in relevant_ids}
+    from utils.workday_calculator import WorkdayCalculator
+
+    moved_ids = {a.id for a in task_assignments}
+    moved_project_ids = {a.project_id for a in task_assignments}
+    relevant_resource_ids = {a.resource_id for a in task_assignments}
+
+    # Group external assignments by (resource_id, date) with ancestor deduplication
+    external_by_res_date = {r_id: {} for r_id in relevant_resource_ids}
     for other in all_assignments:
-        if other.id in task_ids or other.resource_id not in relevant_ids:
+        if other.id in moved_ids or other.resource_id not in relevant_resource_ids:
             continue
-        bucket = occupancy[other.resource_id]
+        if other.project_id in moved_project_ids and any(
+            other.task_id in a.ancestor_task_ids or a.task_id in getattr(other, "ancestor_task_ids", ())
+            for a in task_assignments if a.resource_id == other.resource_id
+        ):
+            continue
+        res_dict = external_by_res_date[other.resource_id]
         for date in other.occupied_dates:
-            bucket[date] = bucket.get(date, 0) + other.capacity_units
-    candidate = datetime.strptime(
-        min(value.start_date for value in task_assignments), DATE_FMT
-    ) + timedelta(days=1)
+            res_dict.setdefault(date, []).append(other)
+
+    external_occupancy = {r_id: {} for r_id in relevant_resource_ids}
+    for r_id, date_dict in external_by_res_date.items():
+        for date, raw_others in date_dict.items():
+            present = [o for o in raw_others
+                       if not any(o2.project_id == o.project_id and o2.task_id in o.ancestor_task_ids
+                                  for o2 in raw_others)]
+            external_occupancy[r_id][date] = sum(o.capacity_units for o in present)
+
+    anchor_start = min(a.start_date for a in task_assignments)
+    candidate = datetime.strptime(anchor_start, DATE_FMT) + timedelta(days=1)
     holidays = set(holidays or [])
+
+    assignment_offsets = []
+    for a in task_assignments:
+        if a.start_date >= anchor_start:
+            k = max(0, WorkdayCalculator.calculate_duration(
+                anchor_start, a.start_date, holidays=holidays, exclude_weekends=exclude_weekends) - 1)
+        else:
+            k = 0
+        assignment_offsets.append((a, k, a.workdays))
+
     for _ in range(max_days):
         candidate_text = candidate.strftime(DATE_FMT)
         if (candidate_text in holidays or
                 (exclude_weekends and candidate.weekday() >= 5)):
             candidate += timedelta(days=1)
             continue
-        block, cursor = [], candidate
-        while len(block) < needed:
-            text = cursor.strftime(DATE_FMT)
-            if text not in holidays and (not exclude_weekends or cursor.weekday() < 5):
-                block.append(text)
-            cursor += timedelta(days=1)
+
         available = True
-        for assignment in task_assignments:
-            capacity = defs.get(assignment.resource_id, ResourceDefinition(
-                assignment.resource_id, assignment.resource_type,
-                assignment.resource_label)).capacity
-            if any(occupancy[assignment.resource_id].get(date, 0) +
-                   assignment.capacity_units > capacity for date in block):
+        moved_on_date = {}
+        candidate_dates_all = []
+
+        for a, k, dur in assignment_offsets:
+            a_start = WorkdayCalculator.add_workdays(
+                candidate_text, k + 1, holidays=holidays, exclude_weekends=exclude_weekends)
+            a_block = []
+            cursor = datetime.strptime(a_start, DATE_FMT)
+            while len(a_block) < dur:
+                text = cursor.strftime(DATE_FMT)
+                if text not in holidays and (not exclude_weekends or cursor.weekday() < 5):
+                    a_block.append(text)
+                cursor += timedelta(days=1)
+            candidate_dates_all.extend(a_block)
+            for d in a_block:
+                moved_on_date.setdefault((a.resource_id, d), []).append(a)
+
+        for (r_id, date), raw_moved in moved_on_date.items():
+            cap = defs.get(r_id, ResourceDefinition(r_id, raw_moved[0].resource_type, raw_moved[0].resource_label)).capacity
+            present_moved = [m for m in raw_moved
+                             if not any(m2.project_id == m.project_id and m2.task_id in m.ancestor_task_ids
+                                        for m2 in raw_moved)]
+            moved_load = sum(m.capacity_units for m in present_moved)
+            ext_load = external_occupancy[r_id].get(date, 0)
+            if ext_load + moved_load > cap:
                 available = False
                 break
+
         if available:
-            return block[0], block[-1]
+            min_block_date = min(candidate_dates_all) if candidate_dates_all else candidate_text
+            max_block_date = max(candidate_dates_all) if candidate_dates_all else candidate_text
+            return min_block_date, max_block_date
+
         candidate += timedelta(days=1)
+
     return None

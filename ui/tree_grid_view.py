@@ -1680,6 +1680,23 @@ class TreeGridView(QTreeWidget):
         # Apply the hypothetical change to the clone and pin it so the
         # scheduler keeps it (an inline-editable date is always user-owned).
         if new_start is not None:
+            if target.children:
+                old_start = target.start_date
+                if old_start and new_start != old_start:
+                    def shift_c(c):
+                        if c.start_date:
+                            dur = WorkdayCalculator.calculate_duration(c.start_date, c.end_date)
+                            k = max(0, WorkdayCalculator.calculate_duration(old_start, c.start_date) - 1) if c.start_date >= old_start else 0
+                            c_start = WorkdayCalculator.add_workdays(new_start, k + 1)
+                            c_end = WorkdayCalculator.add_workdays(c_start, dur)
+                            if c.start_rule.get("mode") == "fixed":
+                                c.start_rule = {"mode": "fixed", "date": c_start}
+                            c.start_date = c_start
+                            c.end_date = c_end
+                        for sc in c.children:
+                            shift_c(sc)
+                    for c in target.children:
+                        shift_c(c)
             if new_end is not None:
                 target.start_date = new_start
                 target.end_date = new_end
@@ -1793,6 +1810,15 @@ class TreeGridView(QTreeWidget):
                 and rule.get("mode") == "same_as" and rule.get("field") == "start"):
             return False
         node_map = self._get_node_map()
+
+        def is_descendant(parent, child_id):
+            for c in parent.children:
+                if c.id == child_id or is_descendant(c, child_id):
+                    return True
+            return False
+        if is_descendant(node, target_id):
+            return True
+
         seen = set()
         pending = [target_id]
         while pending:
@@ -1807,7 +1833,27 @@ class TreeGridView(QTreeWidget):
                 continue
             for candidate in (current.start_rule, current.end_rule):
                 if candidate.get("mode") in {"same_as", "continue_after"}:
-                    pending.append(candidate.get("task_id"))
+                    cand_id = candidate.get("task_id")
+                    if cand_id:
+                        if not (current.parent and cand_id == current.parent.id
+                                and candidate.get("mode") == "same_as" and candidate.get("field") == "start"):
+                            pending.append(cand_id)
+            if current.start_rule.get("mode") == "automatic":
+                if current.parent:
+                    if not current.is_parallel:
+                        sibs = current.parent.children
+                        if current in sibs:
+                            idx = sibs.index(current)
+                            if idx > 0:
+                                pending.append(sibs[idx - 1].id)
+                else:
+                    roots = self.root_nodes
+                    if current in roots:
+                        idx = roots.index(current)
+                        if idx > 0:
+                            pending.append(roots[idx - 1].id)
+            for child in current.children:
+                pending.append(child.id)
         return False
 
     def open_date_rule_dialog(self, item: TaskTreeWidgetItem, field="start",
@@ -2498,6 +2544,13 @@ class TreeGridView(QTreeWidget):
         if not item: return
         
         node = item.node
+        removed = set()
+
+        def collect(current):
+            removed.add(current.id)
+            for child in current.children:
+                collect(child)
+        collect(node)
         parent_item = item.parent()
         
         if node.parent:
@@ -2509,6 +2562,16 @@ class TreeGridView(QTreeWidget):
             parent_item.removeChild(item)
         else:
             self.invisibleRootItem().removeChild(item)
+
+        for remaining in self.get_all_nodes_flat():
+            if remaining.start_rule.get("task_id") in removed:
+                remaining.start_rule = {"mode": "automatic"}
+            if remaining.end_rule.get("task_id") in removed:
+                try:
+                    days = max(1, int(remaining.duration or 1))
+                except (TypeError, ValueError):
+                    days = 1
+                remaining.end_rule = {"mode": "duration", "days": days}
 
         # Removal changes sibling anchoring — re-run the scheduler and
         # repaint (date propagation is the scheduler's job, see task_node).
@@ -2548,24 +2611,31 @@ class TreeGridView(QTreeWidget):
         tops = self._top_level_selection()
         if not tops:
             return
-        TreeGridView._task_clipboard = [i.node.to_dict() for i in tops]
-        # Every id leaving this project (subtrees included)
-        removed = set()
+        project = self._project_widget()
+        if project:
+            project.begin_batch()
+        try:
+            TreeGridView._task_clipboard = [i.node.to_dict() for i in tops]
+            # Every id leaving this project (subtrees included)
+            removed = set()
 
-        def collect(n):
-            removed.add(n.id)
-            for c in n.children:
-                collect(c)
-        for i in tops:
-            collect(i.node)
-        for i in tops:
-            self.delete_task(i)
-        # Tasks left behind that depended on a removed task would keep a
-        # dangling link ("(missing)") — clear them instead.
-        for n in self.get_all_nodes_flat():
-            if n.predecessor_id in removed:
-                n.predecessor_id = None
-        self.commit_structure_change(tops[0].node)
+            def collect(n):
+                removed.add(n.id)
+                for c in n.children:
+                    collect(c)
+            for i in tops:
+                collect(i.node)
+            for i in tops:
+                self.delete_task(i)
+            # Tasks left behind that depended on a removed task would keep a
+            # dangling link ("(missing)") — clear them instead.
+            for n in self.get_all_nodes_flat():
+                if n.predecessor_id in removed:
+                    n.predecessor_id = None
+            self.commit_structure_change(tops[0].node)
+        finally:
+            if project:
+                project.end_batch()
 
     def paste_tasks(self, anchor_item: QTreeWidgetItem = None):
         """Paste clipboard subtrees as siblings after anchor_item
@@ -2596,12 +2666,24 @@ class TreeGridView(QTreeWidget):
 
         def fix_preds(n):
             nonlocal cleared
-            if n.predecessor_id:
-                if n.predecessor_id in idmap:
-                    n.predecessor_id = idmap[n.predecessor_id]
-                elif n.predecessor_id not in dest_ids:
-                    n.predecessor_id = None
+            for field in ("start_rule", "end_rule"):
+                rule = dict(getattr(n, field) or {})
+                target = rule.get("task_id")
+                if not target:
+                    continue
+                if target in idmap:
+                    rule["task_id"] = idmap[target]
+                elif target not in dest_ids:
+                    if field == "start_rule":
+                        rule = {"mode": "automatic"}
+                    else:
+                        try:
+                            days = max(1, int(n.duration or 1))
+                        except (TypeError, ValueError):
+                            days = 1
+                        rule = {"mode": "duration", "days": days}
                     cleared += 1
+                setattr(n, field, rule)
             for c in n.children:
                 fix_preds(c)
         for n in nodes:

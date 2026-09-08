@@ -97,6 +97,22 @@ def _token_id(token):
     return str(token.get("id") or "")
 
 
+def _identity_tokens(node):
+    """Stable tokens plus resources-only assignments from older documents."""
+    from utils.resource_allocation import canonical_resource_kind, legacy_resource_id
+    tokens = [dict(value) for value in
+              (getattr(node, "task_tokens", None) or [])]
+    represented = {(canonical_resource_kind(value.get("kind")),
+                    str(value.get("label") or "").strip().casefold())
+                   for value in tokens}
+    for kind, label in (getattr(node, "resources", None) or {}).items():
+        key = (canonical_resource_kind(kind), str(label).strip().casefold())
+        if label and key not in represented:
+            tokens.append({"id": legacy_resource_id(kind, label),
+                           "kind": kind, "label": label})
+    return tokens
+
+
 def _walk(roots):
     def descend(node, path, ancestors):
         current_path = f"{path} > {node.name}" if path else node.name
@@ -232,8 +248,7 @@ def build_identity_story(projects, identity_id, identity_label=None,
         project_id = str(project.get("id") or project.get("project_id") or "project")
         project_name = str(project.get("name") or "Project")
         for node, path, ancestors in _walk(project.get("roots", [])):
-            tokens = [dict(value) for value in
-                      (getattr(node, "task_tokens", None) or [])]
+            tokens = _identity_tokens(node)
             match = next((token for token in tokens
                           if _token_id(token) == identity_id), None)
             if match is None:

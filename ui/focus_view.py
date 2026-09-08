@@ -10,6 +10,7 @@ is shown:
 2. "This week" board â€” Overdue / Due this week / Starting next week,
    each with waiting-on names, so the user knows who to chase.
 """
+import html
 from datetime import datetime, timedelta
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -60,8 +61,10 @@ def _flatten(roots):
 
 def _link(node):
     """Task name as a clickable anchor carrying the node id."""
-    return (f"<a href='{node.id}' style='color:inherit; "
-            f"text-decoration:none;'>{node.name}</a>")
+    node_id_escaped = html.escape(str(node.id), quote=True)
+    node_name_escaped = html.escape(str(node.name))
+    return (f"<a href='{node_id_escaped}' style='color:inherit; "
+            f"text-decoration:none;'>{node_name_escaped}</a>")
 
 
 class FocusView(QWidget):
@@ -202,6 +205,12 @@ class FocusView(QWidget):
 
     def _driver_of(self, node, node_map):
         """The task whose finish dictates this task's start (scheduler mirror)."""
+        mode = (getattr(node, "start_rule", None) or {}).get("mode", "automatic")
+        if mode == "fixed":
+            return None
+        if mode in ("same_as", "continue_after"):
+            target_id = (node.start_rule or {}).get("task_id") or node.predecessor_id
+            return node_map.get(target_id)
         if node.predecessor_id and node.predecessor_id in node_map:
             return node_map[node.predecessor_id]
         if node.parent:
@@ -365,7 +374,7 @@ class FocusView(QWidget):
 
         # Push-here card
         if push_task:
-            waiting = f" (waiting on {push_task.waiting_on})" if push_task.waiting_on else ""
+            waiting = f" (waiting on {html.escape(str(push_task.waiting_on))})" if push_task.waiting_on else ""
             lay.addWidget(self._label(
                 f"<span style='color:#A32D2D; font-weight:bold;'>Push here:"
                 f"</span> <b>{_link(push_task)}</b>{waiting} â€” every workday "
@@ -470,7 +479,7 @@ class FocusView(QWidget):
             clay.addWidget(head)
             if items:
                 for n in items[:8]:
-                    waiting = f" - waiting on {n.waiting_on}" if n.waiting_on else ""
+                    waiting = f" - waiting on {html.escape(str(n.waiting_on))}" if n.waiting_on else ""
                     date_label = f"{prefix} {_fmt(date_of(n))}"
                     if title == "Due this week" and _parse(date_of(n)) == today:
                         date_label = "<b>today</b>"

@@ -21,12 +21,14 @@ class CriticalPathAnalyzer:
     the minimum project duration. Any delay in critical path tasks delays the entire project.
     """
 
-    def __init__(self, root_nodes: List[TaskNode]):
+    def __init__(self, root_nodes: List[TaskNode], holidays=None, exclude_weekends=None):
         """
         Initialize analyzer with root task nodes.
 
         Args:
             root_nodes: List of root-level TaskNode objects
+            holidays: Optional set of holiday date strings (YYYY-MM-DD)
+            exclude_weekends: Optional bool for excluding weekends
         """
         self.root_nodes = root_nodes
         self.all_nodes = self._flatten_nodes(root_nodes)
@@ -34,6 +36,11 @@ class CriticalPathAnalyzer:
 
         # ONLY include LEAF tasks (no children) in critical path calculation
         self.leaf_nodes = [node for node in self.all_nodes if not node.children]
+
+        from utils.config_manager import ConfigManager
+        config = ConfigManager()
+        self.holidays = set(holidays if holidays is not None else config.get_holidays())
+        self.exclude_weekends = bool(exclude_weekends if exclude_weekends is not None else config.get_exclude_weekends())
 
         # Results storage
         self.early_start: Dict[str, datetime] = {}
@@ -54,75 +61,99 @@ class CriticalPathAnalyzer:
         return result
 
     def _get_duration_days(self, node: TaskNode) -> int:
-        """Calculate duration in days between start and end date."""
+        """Calculate duration in workdays between start and end date."""
         if not node.start_date or not node.end_date:
             return 0
+        from utils.workday_calculator import WorkdayCalculator
+        return max(1, WorkdayCalculator.calculate_duration(
+            node.start_date, node.end_date,
+            holidays=self.holidays, exclude_weekends=self.exclude_weekends
+        ))
 
-        try:
-            start = datetime.strptime(node.start_date, DATE_FMT)
-            end = datetime.strptime(node.end_date, DATE_FMT)
-            return max(0, (end - start).days)
-        except (ValueError, AttributeError):
-            return 0
+    def _get_prev_workday(self, date_str: str) -> str:
+        from utils.workday_calculator import WorkdayCalculator
+        dt = datetime.strptime(date_str, DATE_FMT)
+        while True:
+            dt -= timedelta(days=1)
+            if WorkdayCalculator.is_workday(dt, self.holidays, self.exclude_weekends):
+                return dt.strftime(DATE_FMT)
+
+    def _subtract_workdays(self, end_date_str: str, days: int) -> str:
+        from utils.workday_calculator import WorkdayCalculator
+        if days <= 1:
+            return end_date_str
+        dt = datetime.strptime(end_date_str, DATE_FMT)
+        added = 0
+        target = days - 1
+        while added < target:
+            dt -= timedelta(days=1)
+            if WorkdayCalculator.is_workday(dt, self.holidays, self.exclude_weekends):
+                added += 1
+        return dt.strftime(DATE_FMT)
+
+    def _resolve_leaf_predecessors(self, pred_node: TaskNode, prefer_start: bool = False) -> List[TaskNode]:
+        if not pred_node.children:
+            return [pred_node]
+        leaves = [n for n in self._flatten_nodes(pred_node.children) if not n.children]
+        if not leaves:
+            return []
+        if prefer_start:
+            return [min(leaves, key=lambda c: c.start_date if c.start_date else "9999-99-99")]
+        return [max(leaves, key=lambda c: c.end_date if c.end_date else "0000-00-00")]
 
     def _get_predecessors(self, node: TaskNode) -> List[TaskNode]:
         """
         Get all predecessors for a LEAF task (both explicit and implicit).
-        If predecessor is a PARENT task, resolves to its longest child.
+        Respects start_rule (fixed tasks have no predecessor).
         """
         predecessors = []
+        s_mode = node.start_rule.get("mode", "automatic")
 
-        # 1. Explicit predecessor (manual link)
-        if node.predecessor_id and node.predecessor_id in self.node_map:
-            pred = self.node_map[node.predecessor_id]
+        # 1. Explicit start rule dependency (continue_after, same_as)
+        if s_mode in ("same_as", "continue_after"):
+            target_id = node.start_rule.get("task_id")
+            if target_id and target_id in self.node_map:
+                pred = self.node_map[target_id]
+                prefer_start = (s_mode == "same_as" and node.start_rule.get("field") == "start")
+                predecessors.extend(self._resolve_leaf_predecessors(pred, prefer_start=prefer_start))
 
-            # If predecessor is a PARENT (has children), use its longest child instead
-            if pred.children:
-                # Find the child with the latest end date
-                longest_child = max(pred.children,
-                                  key=lambda c: c.end_date if c.end_date else "0000-00-00")
-                predecessors.append(longest_child)
-            else:
-                predecessors.append(pred)
-
-        # 2. Implicit predecessor (previous sibling in sequential mode)
-        elif node.parent and not node.is_parallel:
-            siblings = node.parent.children
-            try:
-                idx = siblings.index(node)
-                if idx > 0:
-                    prev_sibling = siblings[idx - 1]
-                    # If previous sibling is a parent, use its longest child
-                    if prev_sibling.children:
-                        longest_child = max(prev_sibling.children,
-                                          key=lambda c: c.end_date if c.end_date else "0000-00-00")
-                        predecessors.append(longest_child)
-                    else:
-                        predecessors.append(prev_sibling)
-            except ValueError:
-                pass
-
-        return predecessors
-
-    def _get_successors(self, node: TaskNode) -> List[TaskNode]:
-        """Get all successors for a task (tasks that depend on this one)."""
-        successors = []
-
-        # Find all tasks that have this node as predecessor
-        for other_node in self.all_nodes:
-            if other_node.predecessor_id == node.id:
-                successors.append(other_node)
-            elif other_node.parent and not other_node.is_parallel:
-                # Check if this node is the previous sibling
-                siblings = other_node.parent.children
+        # 2. Sequential sibling predecessor (only for automatic sequential mode)
+        elif s_mode == "automatic":
+            if node.parent and not node.is_parallel:
+                siblings = node.parent.children
                 try:
-                    idx = siblings.index(other_node)
-                    if idx > 0 and siblings[idx - 1].id == node.id:
-                        successors.append(other_node)
+                    idx = siblings.index(node)
+                    if idx > 0:
+                        prev_sibling = siblings[idx - 1]
+                        predecessors.extend(self._resolve_leaf_predecessors(prev_sibling))
+                except ValueError:
+                    pass
+            elif not node.parent:
+                try:
+                    idx = self.root_nodes.index(node)
+                    if idx > 0:
+                        prev_root = self.root_nodes[idx - 1]
+                        predecessors.extend(self._resolve_leaf_predecessors(prev_root))
                 except ValueError:
                     pass
 
-        return successors
+        # 3. Explicit end rule dependency (same_as)
+        e_mode = node.end_rule.get("mode")
+        if e_mode == "same_as":
+            target_id = node.end_rule.get("task_id")
+            if target_id and target_id in self.node_map:
+                pred = self.node_map[target_id]
+                predecessors.extend(self._resolve_leaf_predecessors(pred))
+
+        unique_preds = []
+        for p in predecessors:
+            if p and p.id != node.id and p.id in self.node_map and p not in unique_preds:
+                unique_preds.append(p)
+        return unique_preds
+
+    def _get_successors(self, node: TaskNode) -> List[TaskNode]:
+        """Get all leaf successors for a task."""
+        return [other for other in self.leaf_nodes if node in self._get_predecessors(other)]
 
     def _topological_sort(self) -> List[TaskNode]:
         """
@@ -130,14 +161,12 @@ class CriticalPathAnalyzer:
         Uses Kahn's algorithm for cycle detection.
         Only processes leaf tasks (tasks with no children).
         """
-        # Calculate in-degree for each LEAF node
         in_degree = {node.id: 0 for node in self.leaf_nodes}
         for node in self.leaf_nodes:
             for succ in self._get_successors(node):
-                if succ.id in in_degree:  # Only count successors that are also leaves
+                if succ.id in in_degree:
                     in_degree[succ.id] += 1
 
-        # Start with leaf nodes that have no predecessors
         queue = [node for node in self.leaf_nodes if in_degree[node.id] == 0]
         result = []
 
@@ -146,25 +175,24 @@ class CriticalPathAnalyzer:
             result.append(node)
 
             for succ in self._get_successors(node):
-                if succ.id in in_degree:  # Only process leaf successors
+                if succ.id in in_degree:
                     in_degree[succ.id] -= 1
                     if in_degree[succ.id] == 0:
                         queue.append(succ)
 
-        # If not all leaf nodes are in result, there's a cycle
         if len(result) != len(self.leaf_nodes):
             print("WARNING: Circular dependency detected in leaf tasks!")
-            # Return original list as fallback
             return self.leaf_nodes
 
         return result
 
     def forward_pass(self):
         """
-        Calculate Early Start (ES) and Early Finish (EF) for all tasks.
-        ES = max(EF of all predecessors)
-        EF = ES + Duration
+        Calculate Early Start (ES) and Early Finish (EF) for all leaf tasks.
+        ES = max(EF of all predecessors converted to workdays)
+        EF = add_workdays(ES, duration)
         """
+        from utils.workday_calculator import WorkdayCalculator
         sorted_nodes = self._topological_sort()
 
         for node in sorted_nodes:
@@ -176,38 +204,68 @@ class CriticalPathAnalyzer:
             except ValueError:
                 continue
 
+            s_mode = node.start_rule.get("mode", "automatic")
             predecessors = self._get_predecessors(node)
 
-            if predecessors:
-                # ES = max(predecessor EF)
-                max_pred_ef = None
+            if s_mode == "fixed":
+                self.early_start[node.id] = node_start
+            elif predecessors:
+                max_pred_es = None
                 for pred in predecessors:
-                    if pred.id in self.early_finish:
-                        if max_pred_ef is None or self.early_finish[pred.id] > max_pred_ef:
-                            max_pred_ef = self.early_finish[pred.id]
+                    if pred.id not in self.early_finish:
+                        continue
+                    pred_ef_str = self.early_finish[pred.id].strftime(DATE_FMT)
+                    if s_mode == "same_as":
+                        field = node.start_rule.get("field", "start")
+                        if field == "start" and pred.id in self.early_start:
+                            base_date_str = self.early_start[pred.id].strftime(DATE_FMT)
+                        else:
+                            base_date_str = pred_ef_str
+                        offset = int(node.start_rule.get("offset", 0) or 0)
+                        if offset > 0:
+                            base_date_str = WorkdayCalculator.add_workdays(
+                                base_date_str, offset + 1,
+                                holidays=self.holidays, exclude_weekends=self.exclude_weekends
+                            )
+                        pred_req_date = datetime.strptime(base_date_str, DATE_FMT)
+                    else:
+                        next_wd = WorkdayCalculator.get_next_workday(
+                            pred_ef_str,
+                            holidays=self.holidays, exclude_weekends=self.exclude_weekends
+                        )
+                        offset = int(node.start_rule.get("offset", 0) or 0) if s_mode == "continue_after" else 0
+                        if offset > 0:
+                            next_wd = WorkdayCalculator.add_workdays(
+                                next_wd, offset + 1,
+                                holidays=self.holidays, exclude_weekends=self.exclude_weekends
+                            )
+                        pred_req_date = datetime.strptime(next_wd, DATE_FMT)
 
-                if max_pred_ef:
-                    # Add 1 day (next workday logic)
-                    self.early_start[node.id] = max_pred_ef + timedelta(days=1)
-                else:
-                    self.early_start[node.id] = node_start
+                    if max_pred_es is None or pred_req_date > max_pred_es:
+                        max_pred_es = pred_req_date
+
+                self.early_start[node.id] = max_pred_es if max_pred_es else node_start
             else:
-                # No predecessors, use actual start date
                 self.early_start[node.id] = node_start
 
             # Calculate Early Finish
             duration = self._get_duration_days(node)
-            self.early_finish[node.id] = self.early_start[node.id] + timedelta(days=duration)
+            es_str = self.early_start[node.id].strftime(DATE_FMT)
+            ef_str = WorkdayCalculator.add_workdays(
+                es_str, max(1, duration),
+                holidays=self.holidays, exclude_weekends=self.exclude_weekends
+            )
+            self.early_finish[node.id] = datetime.strptime(ef_str, DATE_FMT)
 
     def backward_pass(self):
         """
-        Calculate Late Start (LS) and Late Finish (LF) for all tasks.
-        LF = min(LS of all successors)
-        LS = LF - Duration
+        Calculate Late Start (LS) and Late Finish (LF) for all leaf tasks.
+        LF = min(LS of all successors converted to workdays)
+        LS = subtract_workdays(LF, duration)
         """
+        from utils.workday_calculator import WorkdayCalculator
         sorted_nodes = list(reversed(self._topological_sort()))
 
-        # Find project end date (max EF)
         if not self.early_finish:
             return
 
@@ -218,39 +276,87 @@ class CriticalPathAnalyzer:
                 continue
 
             successors = self._get_successors(node)
+            duration = self._get_duration_days(node)
 
             if successors:
-                # LF = min(successor LS) - 1 day
+                min_succ_lf = project_end
                 min_succ_ls = None
                 for succ in successors:
-                    if succ.id in self.late_start:
-                        if min_succ_ls is None or self.late_start[succ.id] < min_succ_ls:
-                            min_succ_ls = self.late_start[succ.id]
+                    if succ.id not in self.late_start:
+                        continue
+                    s_mode = succ.start_rule.get("mode", "automatic")
+                    offset = int(succ.start_rule.get("offset", 0) or 0)
 
-                if min_succ_ls:
-                    self.late_finish[node.id] = min_succ_ls - timedelta(days=1)
+                    if s_mode == "same_as" and succ.start_rule.get("field") == "start":
+                        succ_target_dt = self.late_start[succ.id]
+                        succ_target_str = succ_target_dt.strftime(DATE_FMT)
+                        if offset > 0:
+                            succ_target_str = self._subtract_workdays(succ_target_str, offset + 1)
+                        target_ls_dt = datetime.strptime(succ_target_str, DATE_FMT)
+                        if min_succ_ls is None or target_ls_dt < min_succ_ls:
+                            min_succ_ls = target_ls_dt
+                    elif s_mode == "same_as" and succ.start_rule.get("field") == "end":
+                        succ_target_dt = self.late_finish[succ.id]
+                        succ_target_str = succ_target_dt.strftime(DATE_FMT)
+                        if offset > 0:
+                            succ_target_str = self._subtract_workdays(succ_target_str, offset + 1)
+                        target_lf_dt = datetime.strptime(succ_target_str, DATE_FMT)
+                        if min_succ_lf is None or target_lf_dt < min_succ_lf:
+                            min_succ_lf = target_lf_dt
+                    else:
+                        # Finish-to-Start (continue_after or sequential sibling)
+                        succ_ls_str = self.late_start[succ.id].strftime(DATE_FMT)
+                        target_str = succ_ls_str
+                        if offset > 0:
+                            target_str = self._subtract_workdays(target_str, offset + 1)
+                        prev_wd = self._get_prev_workday(target_str)
+                        target_lf_dt = datetime.strptime(prev_wd, DATE_FMT)
+                        if min_succ_lf is None or target_lf_dt < min_succ_lf:
+                            min_succ_lf = target_lf_dt
+
+                # From LF constraint, calculate corresponding LS
+                ls_from_lf_str = self._subtract_workdays(min_succ_lf.strftime(DATE_FMT), max(1, duration))
+                ls_from_lf_dt = datetime.strptime(ls_from_lf_str, DATE_FMT)
+
+                if min_succ_ls is not None:
+                    self.late_start[node.id] = min(ls_from_lf_dt, min_succ_ls)
                 else:
-                    self.late_finish[node.id] = project_end
-            else:
-                # No successors, this is an end task
-                self.late_finish[node.id] = project_end
+                    self.late_start[node.id] = ls_from_lf_dt
 
-            # Calculate Late Start
-            duration = self._get_duration_days(node)
-            self.late_start[node.id] = self.late_finish[node.id] - timedelta(days=duration)
+                lf_str = WorkdayCalculator.add_workdays(
+                    self.late_start[node.id].strftime(DATE_FMT), max(1, duration),
+                    holidays=self.holidays, exclude_weekends=self.exclude_weekends
+                )
+                self.late_finish[node.id] = datetime.strptime(lf_str, DATE_FMT)
+            else:
+                self.late_finish[node.id] = project_end
+                ls_str = self._subtract_workdays(project_end.strftime(DATE_FMT), max(1, duration))
+                self.late_start[node.id] = datetime.strptime(ls_str, DATE_FMT)
 
     def calculate_slack(self):
         """
-        Calculate slack (float) for LEAF tasks only.
-        Slack = LS - ES (or LF - EF, same result)
-        Slack represents how much a task can be delayed without delaying the project.
+        Calculate slack (float) in workdays for LEAF tasks only.
+        Slack = workdays between early_start and late_start (0 if same).
         """
-        # ONLY calculate slack for LEAF nodes (nodes with ES/LS calculated)
+        from utils.workday_calculator import WorkdayCalculator
         for node in self.leaf_nodes:
             if node.id in self.early_start and node.id in self.late_start:
-                slack_days = (self.late_start[node.id] - self.early_start[node.id]).days
-                self.slack[node.id] = slack_days
-            # Don't set slack for nodes without ES/LS - they're not in the calculation
+                es = self.early_start[node.id]
+                ls = self.late_start[node.id]
+                es_str = es.strftime(DATE_FMT)
+                ls_str = ls.strftime(DATE_FMT)
+                if ls >= es:
+                    count = WorkdayCalculator.calculate_duration(
+                        es_str, ls_str,
+                        holidays=self.holidays, exclude_weekends=self.exclude_weekends
+                    )
+                    self.slack[node.id] = max(0, count - 1)
+                else:
+                    count = WorkdayCalculator.calculate_duration(
+                        ls_str, es_str,
+                        holidays=self.holidays, exclude_weekends=self.exclude_weekends
+                    )
+                    self.slack[node.id] = -(count - 1)
 
     def identify_critical_path(self):
         """
@@ -268,12 +374,9 @@ class CriticalPathAnalyzer:
         Marks all ancestors of critical leaf tasks.
         """
         self.critical_parent_ids.clear()
-
-        # For each critical leaf task, mark all its ancestors
         for critical_id in self.critical_path_ids:
             if critical_id in self.node_map:
                 node = self.node_map[critical_id]
-                # Walk up the parent chain
                 current = node.parent
                 while current:
                     self.critical_parent_ids.add(current.id)
@@ -290,24 +393,28 @@ class CriticalPathAnalyzer:
             - slack: Dict mapping task ID to slack days
             - early_start/early_finish: Dict mapping task ID to dates
             - late_start/late_finish: Dict mapping task ID to dates
-            - project_duration: Total project duration in days
+            - project_duration: Total project duration in workdays
         """
+        from utils.workday_calculator import WorkdayCalculator
         self.forward_pass()
         self.backward_pass()
         self.calculate_slack()
         self.identify_critical_path()
-        self.identify_critical_parents()  # Mark parents with critical children
+        self.identify_critical_parents()
 
-        # Calculate project duration
         project_duration = 0
         if self.early_finish:
-            project_start = min(self.early_start.values()) if self.early_start else datetime.now()
-            project_end = max(self.early_finish.values())
-            project_duration = (project_end - project_start).days
+            project_start_dt = min(self.early_start.values()) if self.early_start else datetime.now()
+            project_end_dt = max(self.early_finish.values())
+            project_duration = WorkdayCalculator.calculate_duration(
+                project_start_dt.strftime(DATE_FMT),
+                project_end_dt.strftime(DATE_FMT),
+                holidays=self.holidays, exclude_weekends=self.exclude_weekends
+            )
 
         return {
-            'critical_path_ids': self.critical_path_ids,  # Critical LEAF tasks
-            'critical_parent_ids': self.critical_parent_ids,  # Parents with critical descendants
+            'critical_path_ids': self.critical_path_ids,
+            'critical_parent_ids': self.critical_parent_ids,
             'slack': self.slack,
             'early_start': self.early_start,
             'early_finish': self.early_finish,
