@@ -1,21 +1,27 @@
+import json
 import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtTest import QSignalSpy, QTest
-from PyQt6.QtWidgets import (QApplication, QAbstractItemView, QLineEdit,
-                             QMessageBox, QStyle, QStyleOptionViewItem)
+from PyQt6.QtWidgets import (QApplication, QAbstractItemView, QDialog,
+                             QDialogButtonBox, QLineEdit, QMessageBox, QStyle,
+                             QStyleOptionViewItem)
 
 from models.task_node import TaskNode
-from ui.identity_story_panel import IdentityStoryPanel, IdentityTimeline
+from ui.identity_story_panel import (
+    IdentityStoryDialog, IdentityStoryPanel, IdentityTimeline,
+)
 from ui.metadata_editor import MetadataEditorDialog
 from ui.tree_grid_view import TreeGridView
 from vpm_tracker_core import Columns
 from utils.identity_story import build_identity_story
 from utils.identity_story import shortest_unique_event_labels
+from utils.usage_logger import UsageLogger, timed_exec
 
 
 def token(identity_id, label, kind="case"):
@@ -276,6 +282,50 @@ class IdentityStoryUiTests(unittest.TestCase):
         self.app.processEvents()
         self.assertIsInstance(QApplication.focusWidget(), QLineEdit)
         tree.close()
+
+    def test_story_close_paths_accept_not_reject(self):
+        """Close, Esc, and reject() finish a viewed story as Accepted."""
+        dialog = IdentityStoryDialog(story_fixture())
+        try:
+            dialog.reject()
+            self.assertEqual(QDialog.DialogCode.Accepted, dialog.result())
+        finally:
+            dialog.close()
+
+        dialog = IdentityStoryDialog(story_fixture())
+        try:
+            buttons = dialog.findChild(QDialogButtonBox)
+            close_btn = buttons.button(QDialogButtonBox.StandardButton.Close)
+            close_btn.click()
+            self.assertEqual(QDialog.DialogCode.Accepted, dialog.result())
+        finally:
+            dialog.close()
+
+        dialog = IdentityStoryDialog(story_fixture())
+        try:
+            dialog.show()
+            self.app.processEvents()
+            QTest.keyClick(dialog, Qt.Key.Key_Escape)
+            self.app.processEvents()
+            self.assertEqual(QDialog.DialogCode.Accepted, dialog.result())
+        finally:
+            dialog.close()
+
+    def test_timed_exec_logs_ok_when_story_is_closed(self):
+        """usage_report cancel rate must not treat a viewed Story as cancel."""
+        with tempfile.TemporaryDirectory() as folder:
+            logger = UsageLogger(folder, enabled=True, import_legacy=False)
+            dialog = IdentityStoryDialog(story_fixture())
+            QTimer.singleShot(0, dialog.reject)
+            with patch("utils.usage_logger.usage", logger):
+                result = timed_exec(dialog, "identity_story")
+            self.assertEqual(QDialog.DialogCode.Accepted, result)
+            rows = [json.loads(line) for line in logger.path().read_text(
+                encoding="utf-8").splitlines()]
+            dialog_rows = [row for row in rows if row["ev"] == "dialog"]
+            self.assertEqual(1, len(dialog_rows))
+            self.assertEqual("identity_story", dialog_rows[0]["d"]["name"])
+            self.assertEqual("ok", dialog_rows[0]["d"]["outcome"])
 
 
 if __name__ == "__main__":
