@@ -424,5 +424,10 @@ class IdentityStoryDialog(QDialog):
         self.panel.jumpRequested.connect(self.jumpRequested)
         layout.addWidget(self.panel, 1)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(self.reject)
+        # View-only: Close / Esc / window close is a completed view, not abort.
+        buttons.rejected.connect(self.accept)
         layout.addWidget(buttons)
+
+    def reject(self):
+        """Esc and title-bar close finish a successful view, not a cancel."""
+        self.accept()
