@@ -88,6 +88,29 @@ class IdentityStoryUiTests(unittest.TestCase):
             "Case VAVE › Lab Testing",
         }, set(timeline._event_labels.values()))
 
+    def test_timeline_keeps_parent_for_uniquely_worded_lab_testing_row(self):
+        selected = token("case-1", "RLN2MA-2")
+        parent = task("LT Aluminum coil", "2026-08-01", "2026-10-31")
+        child = task("[Lab Testing] - no clear timeline yet",
+                     "2026-10-05", "2026-10-23", [selected])
+        child.parent = parent
+        parent.children = [child]
+        sibling_parent = task("Low Torque compressor - MT",
+                              "2026-08-01", "2026-10-31")
+        sibling = task("Lab Testing", "2026-09-01", "2026-09-20", [selected])
+        sibling.parent = sibling_parent
+        sibling_parent.children = [sibling]
+        story = build_identity_story([{
+            "id": "p", "name": "VAVE-MB 2.0",
+            "roots": [parent, sibling_parent],
+        }], "case-1")
+        timeline = IdentityTimeline()
+        timeline.set_story(story)
+        self.assertEqual({
+            "LT Aluminum coil › [Lab Testing] - no clear timeline yet",
+            "Low Torque compressor - MT › Lab Testing",
+        }, set(timeline._event_labels.values()))
+
     def test_bar_double_click_emits_project_and_task(self):
         timeline = IdentityTimeline()
         timeline.resize(900, 420)

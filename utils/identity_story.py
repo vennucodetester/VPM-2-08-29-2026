@@ -1,6 +1,7 @@
 """Neutral, UI-free history model for stable metadata identities."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Iterable, List, Tuple
@@ -156,6 +157,9 @@ def _independent(first, second):
             second.task_id not in first.ancestor_task_ids)
 
 
+_CHIP_LABEL = re.compile(r"\[([^\[\]]+)\]")
+
+
 def _path_parts(event):
     """Return the visible hierarchy for an event, including its task name."""
     parts = [value.strip() for value in str(event.task_path or "").split(">")
@@ -168,6 +172,20 @@ def _path_parts(event):
     return parts
 
 
+def _part_key(part):
+    """Comparable key for one breadcrumb segment.
+
+    Chip-prefixed names such as ``[Lab Testing] - no clear timeline yet``
+    belong with sibling ``Lab Testing`` rows, so uniqueness still walks
+    up to the shared parent instead of treating the leaf as already unique.
+    """
+    text = str(part or "").strip()
+    chip = _CHIP_LABEL.search(text)
+    if chip:
+        return _normal(chip.group(1))
+    return _normal(text)
+
+
 def shortest_unique_event_labels(events):
     """Return the shortest recognizable breadcrumb for every story event.
 
@@ -175,20 +193,26 @@ def shortest_unique_event_labels(events):
     only have to be unique among equally named projects. If two records still
     have the exact same full path, connected identities and dates are used as
     meaningful discriminators before a deterministic sequence number is added.
+
+    A parent is always kept when the event has one. A uniquely worded leaf
+    such as ``[Lab Testing] - no clear timeline yet`` must not drop the
+    parent prefix that sibling Lab Testing rows still show.
     """
     values = list(events or [])
     parts_by_id = {value.event_id: _path_parts(value) for value in values}
+    keys_by_id = {event_id: tuple(_part_key(part) for part in parts)
+                  for event_id, parts in parts_by_id.items()}
     candidates = {}
     for value in values:
         parts = parts_by_id[value.event_id]
         chosen = " › ".join(parts)
-        for depth in range(1, len(parts) + 1):
-            suffix = tuple(_normal(part) for part in parts[-depth:])
+        min_depth = 2 if len(parts) > 1 else 1
+        for depth in range(min_depth, len(parts) + 1):
+            suffix = keys_by_id[value.event_id][-depth:]
             matching = [other for other in values
                         if (_normal(other.project_name) ==
                             _normal(value.project_name) and
-                            tuple(_normal(part) for part in
-                                  parts_by_id[other.event_id][-depth:]) == suffix)]
+                            keys_by_id[other.event_id][-depth:] == suffix)]
             if len(matching) == 1:
                 chosen = " › ".join(parts[-depth:])
                 break

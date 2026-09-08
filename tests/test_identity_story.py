@@ -57,6 +57,81 @@ class IdentityStoryTests(unittest.TestCase):
         }, set(labels.values()))
         self.assertEqual(3, len(set(labels.values())))
 
+    def test_uniquely_worded_lab_testing_row_still_keeps_parent(self):
+        """A unique leaf such as '[Lab Testing] - no clear timeline yet'
+        must still show its parent, matching sibling Lab Testing rows."""
+        selected = token("case-1", "RLN2MA-2")
+        root = task("VAVE activities", "2026-08-01", "2026-10-31")
+        cap = task("CAP Tube testing - MT (Room 7)", "2026-08-01", "2026-09-30",
+                   parent=root)
+        first = task("Lab Testing", "2026-08-01", "2026-08-20",
+                     [selected], parent=cap)
+        compressor = task("Low Torque compressor - MT", "2026-08-01",
+                          "2026-10-31", parent=root)
+        second = task("Lab Testing", "2026-09-01", "2026-09-20",
+                      [selected], parent=compressor)
+        coil = task("LT Aluminum coil", "2026-08-01", "2026-10-31",
+                    parent=root)
+        third = task("[Lab Testing] - no clear timeline yet",
+                     "2026-10-05", "2026-10-23", [selected], parent=coil)
+        root.children = [cap, compressor, coil]
+        cap.children = [first]
+        compressor.children = [second]
+        coil.children = [third]
+
+        story = build_identity_story(
+            [project("P", "VAVE-MB 2.0", [root])], "case-1")
+        labels = shortest_unique_event_labels(story.events)
+        self.assertEqual({
+            "CAP Tube testing - MT (Room 7) › Lab Testing",
+            "Low Torque compressor - MT › Lab Testing",
+            "LT Aluminum coil › [Lab Testing] - no clear timeline yet",
+        }, set(labels.values()))
+        orphan = next(value for value in story.events
+                      if "no clear timeline yet" in value.task_name)
+        self.assertIn("LT Aluminum coil", labels[orphan.event_id])
+        self.assertIn(" › ", labels[orphan.event_id])
+
+    def test_chip_prefixed_lab_testing_parent_keeps_component_prefix(self):
+        """DOE children under a uniquely worded Lab Testing parent still
+        include the component, like sibling Parent › Lab Testing › DOE rows."""
+        selected = token("doe-2", "DOE - Type 2", "activity")
+        root = task("VAVE activities", "2026-08-01", "2026-10-31")
+        cap = task("CAP Tube testing - MT (Room 7)", "2026-08-01",
+                   "2026-10-31", parent=root)
+        lab = task("Lab Testing", "2026-08-01", "2026-10-31", parent=cap)
+        first = task("DOE - Type 2", "2026-08-15", "2026-09-10",
+                     [selected], parent=lab)
+        unclear = task("Unscheduled parent", "2026-08-01", "2026-10-31",
+                       parent=root)
+        unclear_lab = task("[Lab Testing] - no clear timeline yet",
+                           "2026-08-01", "2026-10-31", parent=unclear)
+        second = task("DOE - Type 2", "2026-09-20", "2026-10-10",
+                      [selected], parent=unclear_lab)
+        root.children = [cap, unclear]
+        cap.children = [lab]
+        lab.children = [first]
+        unclear.children = [unclear_lab]
+        unclear_lab.children = [second]
+
+        story = build_identity_story(
+            [project("P", "VAVE-MB 2.0", [root])], "doe-2")
+        labels = shortest_unique_event_labels(story.events)
+        self.assertEqual({
+            "CAP Tube testing - MT (Room 7) › Lab Testing › DOE - Type 2",
+            ("Unscheduled parent › [Lab Testing] - no clear timeline yet › "
+             "DOE - Type 2"),
+        }, set(labels.values()))
+
+    def test_root_event_without_parent_stays_leaf_only(self):
+        selected = token("case-1", "Case")
+        node = task("Inbox note", "2026-09-01", "2026-09-02", [selected])
+        story = build_identity_story(
+            [project("P", "P", [node])], "case-1")
+        self.assertEqual(
+            {"Inbox note"},
+            set(shortest_unique_event_labels(story.events).values()))
+
     def test_repeated_parent_names_expand_until_labels_are_unique(self):
         selected = token("case-1", "Case")
         roots = []
