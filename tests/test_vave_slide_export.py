@@ -46,6 +46,63 @@ class VaveSlideExportTests(unittest.TestCase):
         self.assertNotIn("Potential $", headers)
         self.assertNotIn("Realized $", headers)
 
+    def test_export_duration_uses_each_projects_calendar(self):
+        node = _node("Friday through Monday")
+        node.start_date, node.end_date = "2026-09-04", "2026-09-07"
+        projects = [{"name": "Weekdays", "metadata": {
+            "exclude_weekends": True, "holidays": []}, "roots": [node]},
+                    {"name": "Calendar Days", "metadata": {
+            "exclude_weekends": False, "holidays": []}, "roots": [node]}]
+        tmp, wb = self._export(projects)
+        self.addCleanup(tmp.cleanup)
+        for sheet, expected in (("Weekdays Tasks", "2"),
+                                ("Calendar Days Tasks", "4")):
+            headers = [cell.value for cell in wb[sheet][1]]
+            self.assertEqual(expected, wb[sheet].cell(
+                2, headers.index("Duration") + 1).value)
+
+    def test_export_describes_same_as_start_and_end_rules(self):
+        source = _node("Source")
+        linked = _node("Linked")
+        linked.start_rule = {"mode": "same_as", "task_id": source.id,
+                             "field": "start"}
+        linked.end_rule = {"mode": "same_as", "task_id": source.id,
+                           "field": "end"}
+        tmp, wb = self._export([{"name": "Rules", "metadata": {},
+                                "roots": [source, linked]}])
+        self.addCleanup(tmp.cleanup)
+        sheet = wb["Rules Tasks"]
+        headers = [cell.value for cell in sheet[1]]
+        self.assertEqual("Start = Source start; End = Source end",
+                         sheet.cell(3, headers.index("Depends On") + 1).value)
+
+    def test_f09_excel_export_dependency_includes_signed_offset_and_units(self):
+        source = _node("Source")
+        t1 = _node("Task1")
+        t1.start_rule = {"mode": "same_as", "task_id": source.id, "field": "start",
+                         "offset": 3, "offset_unit": "workdays"}
+        t2 = _node("Task2")
+        t2.start_rule = {"mode": "continue_after", "task_id": source.id, "field": "end",
+                         "offset": 1, "offset_unit": "workdays"}
+        t3 = _node("Task3")
+        t3.end_rule = {"mode": "same_as", "task_id": source.id, "field": "end",
+                       "offset": -2, "offset_unit": "calendar_days"}
+        t4 = _node("Task4")
+        t4.start_rule = {"mode": "same_as", "task_id": source.id, "field": "start",
+                         "offset": 0, "offset_unit": "workdays"}
+
+        tmp, wb = self._export([{"name": "Rules", "metadata": {},
+                                 "roots": [source, t1, t2, t3, t4]}])
+        self.addCleanup(tmp.cleanup)
+        sheet = wb["Rules Tasks"]
+        headers = [cell.value for cell in sheet[1]]
+        dep_col = headers.index("Depends On") + 1
+
+        self.assertEqual("Start = Source start +3 workdays", sheet.cell(3, dep_col).value)
+        self.assertEqual("Start after Source end +1 workdays", sheet.cell(4, dep_col).value)
+        self.assertEqual("End = Source end -2 calendar days", sheet.cell(5, dep_col).value)
+        self.assertEqual("Start = Source start", sheet.cell(6, dep_col).value)
+
     def test_vave_export_creates_data_and_slide_ready_previews(self):
         cassette = _attach(
             _node("Cassette VAVE activities"),

@@ -419,9 +419,16 @@ class MetadataEditorDialog(QDialog):
                 seen_labels.add(duplicate_key)
                 timeline_item = table.item(row, 1)
                 timeline_text = timeline_item.text().strip() if timeline_item else ""
-                try:
-                    duration = max(1, int(timeline_text)) if timeline_text else None
-                except ValueError:
+                if timeline_text:
+                    try:
+                        duration = int(timeline_text)
+                        if duration < 1:
+                            raise ValueError
+                    except ValueError:
+                        raise ValueError(
+                            f"Invalid duration '{timeline_text}' for '{name}' in '{header}'. "
+                            "Duration must be a positive integer.")
+                else:
                     duration = None
                 overlap_item = table.item(row, 2)
                 flag_overlaps = bool(

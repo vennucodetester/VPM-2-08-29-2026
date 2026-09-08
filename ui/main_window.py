@@ -91,7 +91,21 @@ class MainWindow(QMainWindow):
         if self.current_filepath and self.file_guard.changed_on_disk():
             usage_logger.log("file_conflict", where="autosave")
             self.statusBar().showMessage(
-                "Autosave paused: the project changed on disk", 10000)
+                "Autosave paused for file: changed on disk; emergency recovery snapshot saved", 10000)
+            try:
+                from utils.vpmt_io import save_projects
+                recovery_target = self._recovery_path()
+                save_projects(
+                    [p.to_persistable() for p in self.all_projects()],
+                    recovery_target,
+                    rotate_backups=False,
+                    resource_definitions=self.resource_definitions,
+                    conflict_resolutions=self.resource_conflict_resolutions,
+                )
+            except Exception as exc:
+                usage_logger.log("recovery_save_failed", type=type(exc).__name__, manual=False)
+                self.statusBar().showMessage(
+                    "Autosave paused: changed on disk; recovery snapshot failed", 10000)
             return
         try:
             from utils.vpmt_io import save_projects
@@ -140,11 +154,28 @@ class MainWindow(QMainWindow):
             candidates.append(legacy)
         return sorted(set(candidates), key=os.path.getmtime, reverse=True)
 
+    def _handled_recoveries(self) -> dict:
+        raw = self.settings.value("recovery_handled_map", None)
+        if isinstance(raw, dict):
+            return dict(raw)
+        return {}
+
+    def _mark_recovery_handled(self, recovery_path: str, mtime: float):
+        handled = self._handled_recoveries()
+        key = os.path.basename(recovery_path)
+        handled[key] = float(mtime)
+        self.settings.setValue("recovery_handled_map", handled)
+
     def _restore_startup_state(self) -> bool:
+        handled = self._handled_recoveries()
         for recovery in self._recovery_candidates():
-            last_saved = self.settings.value("recovery_last_imported_mtime", 0, type=float) or 0
-            recovery_mtime = os.path.getmtime(recovery)
-            if recovery_mtime > last_saved:
+            key = os.path.basename(recovery)
+            last_handled_mtime = float(handled.get(key, 0) or 0)
+            try:
+                recovery_mtime = os.path.getmtime(recovery)
+            except OSError:
+                continue
+            if recovery_mtime > last_handled_mtime:
                 reply = QMessageBox.question(
                     self, "Restore Recovery File?",
                     "A recovery copy from an unsaved file was found.\n\n"
@@ -157,12 +188,11 @@ class MainWindow(QMainWindow):
                     if self._load_path(recovery, prompt_unsaved=False, is_recovery=True):
                         self.current_filepath = None
                         self.unsaved_changes = True
-                        self.settings.setValue("recovery_last_imported_mtime", recovery_mtime)
+                        self._mark_recovery_handled(recovery, recovery_mtime)
                         self.update_title()
                         return True
                 else:
-                    self.settings.setValue("recovery_last_imported_mtime", recovery_mtime)
-                break
+                    self._mark_recovery_handled(recovery, recovery_mtime)
 
         for path in self._recent_files():
             if self._load_path(path, prompt_unsaved=False):
@@ -358,12 +388,25 @@ class MainWindow(QMainWindow):
         authoritative = {}
         for resource_id, current in derived.items():
             configured = metadata.get(resource_id)
+            saved = combined.get(resource_id)
+            if configured is not None:
+                conflict_enabled = configured.conflict_enabled
+                item_type = configured.type
+                item_label = configured.label
+            elif saved is not None:
+                conflict_enabled = saved.conflict_enabled
+                item_type = saved.type
+                item_label = saved.label
+            else:
+                conflict_enabled = current.conflict_enabled
+                item_type = current.type
+                item_label = current.label
             authoritative[resource_id] = ResourceDefinition(
                 resource_id,
-                configured.type if configured else current.type,
-                configured.label if configured else current.label,
+                item_type,
+                item_label,
                 current.capacity,
-                configured.conflict_enabled if configured else False,
+                conflict_enabled,
                 current.active,
                 current.home_location,
                 current.notes,
@@ -522,16 +565,44 @@ class MainWindow(QMainWindow):
     def _move_resource_to_next_available(self, project, node, conflict):
         from ui.dialogs import ImpactReviewDialog
         from utils.resource_allocation import next_available_block
-        task_assignments = [a for a in self.resource_analysis.assignments
-                            if a.task_id == node.id]
-        assignment = next((a for a in task_assignments
+        from utils.workday_calculator import WorkdayCalculator
+
+        subtree_nodes = [node]
+        def collect_nodes(n):
+            for c in n.children:
+                subtree_nodes.append(c)
+                collect_nodes(c)
+        collect_nodes(node)
+        subtree_ids = {n.id for n in subtree_nodes}
+
+        # Check F13: are any descendant tasks locked by external dependencies?
+        for n in subtree_nodes:
+            if n == node:
+                continue
+            for rule in (n.start_rule, n.end_rule):
+                mode = rule.get("mode")
+                if mode in ("same_as", "continue_after"):
+                    target_id = rule.get("task_id")
+                    if target_id and target_id not in subtree_ids:
+                        target_item = project.tree_view._find_item_by_id(target_id)
+                        target_name = target_item.node.name if target_item else "another task"
+                        QMessageBox.warning(
+                            self, "External Dependency Prevents Move",
+                            f"Cannot move '{node.name}' because child task '{n.name}' depends on external task '{target_name}'.\n"
+                            "Remove or adjust this dependency before moving."
+                        )
+                        return
+
+        subtree_assignments = [a for a in self.resource_analysis.assignments
+                               if a.task_id in subtree_ids and a.project_id == project.project_id]
+        assignment = next((a for a in subtree_assignments
                            if a.task_id == node.id and
                            a.resource_id == conflict.resource_id), None)
         if not assignment:
             return
         metadata = project.to_persistable().get("metadata", {})
         preview = next_available_block(
-            task_assignments, self.resource_analysis.assignments,
+            subtree_assignments, self.resource_analysis.assignments,
             self.resource_analysis.definitions,
             metadata.get("holidays", []), metadata.get("exclude_weekends", True))
         if not preview:
@@ -554,9 +625,38 @@ class MainWindow(QMainWindow):
             dialog = ImpactReviewDialog(impact, self)
             if not usage_logger.timed_exec(dialog, "resource_move_impact"):
                 return
-        node.set_start_rule({"mode": "fixed", "date": new_start})
-        node.set_end_rule({"mode": "duration", "days": assignment.workdays})
-        project.tree_view.commit_structure_change(node)
+
+        project.begin_batch()
+        try:
+            if node.children:
+                old_start = node.start_date
+                if old_start and new_start != old_start:
+                    def shift_descendant(child):
+                        if child.start_date:
+                            dur = WorkdayCalculator.calculate_duration(child.start_date, child.end_date)
+                            k = max(0, WorkdayCalculator.calculate_duration(old_start, child.start_date) - 1) if child.start_date >= old_start else 0
+                            c_start = WorkdayCalculator.add_workdays(new_start, k + 1)
+                            c_end = WorkdayCalculator.add_workdays(c_start, dur)
+                            if child.start_rule.get("mode") == "fixed":
+                                child.set_start_rule({"mode": "fixed", "date": c_start})
+                            if child.end_rule.get("mode") == "fixed":
+                                child.set_end_rule({"mode": "fixed", "date": c_end})
+                            elif child.end_rule.get("mode") == "duration":
+                                child.set_end_rule({"mode": "duration", "days": dur})
+                            child.start_date = c_start
+                            child.end_date = c_end
+                        for subchild in child.children:
+                            shift_descendant(subchild)
+
+                    for child in node.children:
+                        shift_descendant(child)
+
+            node.set_start_rule({"mode": "fixed", "date": new_start})
+            if not node.children:
+                node.set_end_rule({"mode": "duration", "days": assignment.workdays})
+            project.tree_view.commit_structure_change(node)
+        finally:
+            project.end_batch()
         usage_logger.log("resource_conflict_action", action="move_next")
 
     def show_resource_usage(self, focus_resource_id=None):
@@ -926,7 +1026,19 @@ class MainWindow(QMainWindow):
             issues.append(("Project has never been reviewed", None))
         elif (today - reviewed_date).days > 7:
             issues.append((f"Project review is {(today - reviewed_date).days} days old", None))
-        for node in proj.tree_view.get_all_nodes_flat():
+        all_nodes = proj.tree_view.get_all_nodes_flat()
+        all_task_ids = {n.id for n in all_nodes}
+        for node in all_nodes:
+            # F24: validate rule targets against current project tasks
+            start_target = node.start_rule.get("task_id")
+            if node.start_rule.get("mode") in ("same_as", "continue_after") and start_target:
+                if start_target not in all_task_ids:
+                    issues.append(("Task start depends on a missing task", node))
+            end_target = node.end_rule.get("task_id")
+            if node.end_rule.get("mode") == "same_as" and end_target:
+                if end_target not in all_task_ids:
+                    issues.append(("Task end depends on a missing task", node))
+
             if node.children:
                 continue
             try:
@@ -946,7 +1058,9 @@ class MainWindow(QMainWindow):
                 issues.append((
                     f"Resource conflict ({detail.get('state', 'unresolved')}): "
                     f"{detail.get('resource_label', '')}", node))
+            # F23: only demand savings disposition when savings were actually proposed
             if (getattr(proj, "is_vave", False) and node.status == "Completed"
+                    and getattr(node, "vave_potential", None) is not None
                     and getattr(node, "vave_realized", None) is None
                     and not getattr(node, "savings_disposition", "")):
                 issues.append(("Completed VAVE work has no savings disposition", node))
@@ -1047,6 +1161,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(table, 1)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Apply | QDialogButtonBox.StandardButton.Cancel)
+
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
@@ -1200,16 +1315,21 @@ class MainWindow(QMainWindow):
         projects = self.all_projects()
         if not projects:
             return
+        active_before = self.active_project()
         task_count = 0
-        for proj in projects:
-            proj.activate()
-            proj.tree_view.recalculate_all_dates()
-            proj.tree_view.refresh_entire_tree()
-            proj.tree_view.update_filter_options()
-            proj.timeline.refresh()
-            proj.gantt_view.load_nodes(proj.tree_view.root_nodes)
-            proj._update_vave_totals()
-            task_count += len(proj.tree_view.get_all_nodes_flat())
+        try:
+            for proj in projects:
+                proj.activate()
+                proj.tree_view.recalculate_all_dates()
+                proj.tree_view.refresh_entire_tree()
+                proj.tree_view.update_filter_options()
+                proj.timeline.refresh()
+                proj.gantt_view.load_nodes(proj.tree_view.root_nodes)
+                proj._update_vave_totals()
+                task_count += len(proj.tree_view.get_all_nodes_flat())
+        finally:
+            if active_before:
+                active_before.activate()
         result = self.recheck_resource_conflicts()
         summary = (f"Refreshed {len(projects)} projects · {task_count} tasks · "
                    f"{len(result.assignments)} resource assignments · "
@@ -1324,32 +1444,39 @@ class MainWindow(QMainWindow):
                     if hits:
                         it = QListWidgetItem(
                             f"{tag}{full_path(node)}   — {', '.join(hits)}")
-                        it.setData(Qt.ItemDataRole.UserRole, (tab_idx, node.id))
+                        it.setData(Qt.ItemDataRole.UserRole,
+                                   (proj.project_id, node.id))
                         results.addItem(it)
                 for e in proj.journal:
                     if q in e.get("text", "").lower():
                         it = QListWidgetItem(
                             f"{tag}Journal {e.get('ts', '')}: {e.get('text', '')}")
-                        it.setData(Qt.ItemDataRole.UserRole, (tab_idx, None))
+                        it.setData(Qt.ItemDataRole.UserRole,
+                                   (proj.project_id, None))
                         results.addItem(it)
                 for line in proj.notes_panel.get_notes():
                     if q in line.lower():
                         it = QListWidgetItem(f"{tag}📝 Note: {line}")
                         it.setData(Qt.ItemDataRole.UserRole,
-                                   (tab_idx, "__note__"))
+                                   (proj.project_id, "__note__"))
                         results.addItem(it)
                 for panel in getattr(proj, "custom_note_panels", []):
                     tab_name = proj.notes_tabs.tabText(proj.notes_tabs.indexOf(panel))
                     if q in panel.plain_text().lower():
                         it = QListWidgetItem(f"{tag}📝 {tab_name}")
                         it.setData(Qt.ItemDataRole.UserRole,
-                                   (tab_idx, f"__note_tab__:{tab_name}"))
+                                   (proj.project_id, f"__note_tab__:{tab_name}"))
                         results.addItem(it)
             usage_logger.log("search", chars=len(q), hits=results.count())
 
         def open_result(it):
             usage_logger.log("search_result_opened")
-            tab_idx, node_id = it.data(Qt.ItemDataRole.UserRole)
+            project_id, node_id = it.data(Qt.ItemDataRole.UserRole)
+            tab_idx = next((index for index in range(self.project_tabs.count())
+                            if getattr(self.project_tabs.widget(index),
+                                       "project_id", None) == project_id), -1)
+            if tab_idx < 0:
+                return
             self.project_tabs.setCurrentIndex(tab_idx)
             proj = self.project_tabs.widget(tab_idx)
             if node_id == "__note__":
@@ -1567,6 +1694,20 @@ class MainWindow(QMainWindow):
         from ui.metadata_editor import MetadataEditorDialog
         from utils.template_catalog import load_templates, save_templates
         templates = load_templates()
+        known_ids = {str(item.get("id")) for item in templates}
+        for definition in self.resource_definitions:
+            resource_id = str(definition.get("id") or "")
+            if not resource_id or resource_id in known_ids or not definition.get("active", True):
+                continue
+            kind = str(definition.get("type") or "resource")
+            templates.append({
+                "id": resource_id,
+                "name": str(definition.get("label") or "Resource"),
+                "kind": kind,
+                "header": kind.replace("_", " ").title(),
+                "flag_overlaps": bool(definition.get("conflict_enabled", False)),
+                "version": 1,
+            })
         dialog = MetadataEditorDialog(
             templates, parent=self, projects=self._resource_projects())
         dialog.jumpRequested.connect(self._jump_to_project_task)
@@ -1574,7 +1715,7 @@ class MainWindow(QMainWindow):
             try:
                 saved = dialog.result_items()
             except ValueError as exc:
-                QMessageBox.warning(self, "Duplicate Metadata Option", str(exc))
+                QMessageBox.warning(self, "Invalid Metadata Option", str(exc))
                 continue
             break
         else:
@@ -1682,9 +1823,38 @@ class MainWindow(QMainWindow):
                         node.name = updated.get("label") or node.name
                     new_tokens.append(updated)
 
+                # ``resources`` is the legacy one-value-per-kind projection
+                # used by older files.  Once a kind has stable tokens, those
+                # tokens are authoritative; otherwise a renamed token leaves
+                # its old label behind as a second physical assignment.
+                resource_kinds = {"room", "case", "cassette", "article",
+                                  "test article"}
+
+                def resource_key(token):
+                    kind = str(token.get("kind") or "").casefold()
+                    if kind not in resource_kinds:
+                        return None
+                    return ("article" if kind in
+                            {"cassette", "article", "test article"} else kind)
+
+                projected = dict(node.resources)
+                token_keys = {key for key in
+                              (resource_key(token) for token in old_tokens + new_tokens)
+                              if key}
+                for key in token_keys:
+                    projected.pop(key, None)
+                for token in new_tokens:
+                    key = resource_key(token)
+                    label = str(token.get("label") or "").strip()
+                    if key and label:
+                        projected[key] = label
+                if projected != node.resources:
+                    changed = True
+
                 if not changed:
                     continue
                 node.task_tokens = new_tokens
+                node.resources = projected
                 new_duration = self._metadata_duration(new_tokens)
                 if follows_default and new_duration is not None:
                     node.end_rule = {"mode": "duration", "days": new_duration}
@@ -1775,8 +1945,8 @@ class MainWindow(QMainWindow):
             self._remember_recent(self.current_filepath)
             recovery = self._session_recovery_path
             if recovery and os.path.exists(recovery):
-                self.settings.setValue("recovery_last_imported_mtime", os.path.getmtime(recovery))
                 try:
+                    self._mark_recovery_handled(recovery, os.path.getmtime(recovery))
                     os.remove(recovery)
                 except OSError:
                     pass
@@ -1817,6 +1987,13 @@ class MainWindow(QMainWindow):
             self.file_guard = candidate
             self.file_guard.refresh()
             self.current_filepath = filename
+            recovery = self._session_recovery_path
+            if recovery and os.path.exists(recovery):
+                try:
+                    self._mark_recovery_handled(recovery, os.path.getmtime(recovery))
+                    os.remove(recovery)
+                except OSError:
+                    pass
             self._session_recovery_path = None
             self.unsaved_changes = False
             self.update_title()

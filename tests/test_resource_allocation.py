@@ -126,8 +126,11 @@ class ResourceAllocationTests(unittest.TestCase):
         result = analyze_projects([
             project("P", [parent, other, dateless], holidays=["2026-09-07"])
         ])
-        self.assertEqual(2, len(result.assignments))
+        self.assertEqual(3, len(result.assignments))
         self.assertEqual(2, result.conflicts[0].overlap_workdays)
+        self.assertEqual({parent.id, other.id},
+                         set(result.conflicts[0].task_ids))
+        self.assertEqual(2, result.conflicts[0].peak_usage)
         self.assertNotIn("phase-1", {a.resource_id for a in result.assignments})
 
     def test_projects_are_analyzed_together_and_fixed_dates_unchanged(self):
@@ -199,6 +202,47 @@ class ResourceAllocationTests(unittest.TestCase):
             loaded = load_projects(path)
         self.assertEqual([], loaded[0]["resource_definitions"])
         self.assertEqual("2026-09-01", loaded[0]["roots"][0].start_date)
+
+    def test_multi_project_duplicate_task_id_conflict_attachment(self):
+        task_p1 = task("Task in P1", "2026-09-01", "2026-09-03", [token("case-1", "C")])
+        task_p1.id = "shared-id-1"
+        task_p2 = task("Task in P2", "2026-09-02", "2026-09-04", [token("case-1", "C")])
+        task_p2.id = "shared-id-1"
+
+        p1 = project("P1", [task_p1], name="Project 1")
+        p2 = project("P2", [task_p2], name="Project 2")
+
+        result = analyze_projects([p1, p2], attach=True)
+        self.assertEqual(1, len(result.conflicts))
+        self.assertTrue(task_p1.schedule_conflicts)
+        self.assertTrue(task_p2.schedule_conflicts)
+        self.assertEqual(1, len(task_p1.resource_conflict_details))
+        self.assertEqual(1, len(task_p2.resource_conflict_details))
+        self.assertIn("Task in P2", task_p1.schedule_conflicts[0])
+        self.assertIn("Task in P1", task_p2.schedule_conflicts[0])
+
+    def test_f04_cassette_and_legacy_article_alias(self):
+        node = task("Task with cassette", "2026-09-01", "2026-09-03", [
+            {"id": "cass", "kind": "cassette", "label": "C", "header": "Cassettes"}
+        ])
+        node.resources = {"article": "C"}
+
+        p = project("P", [node])
+        result = analyze_projects([p])
+        self.assertEqual(1, len(result.assignments))
+        self.assertEqual("cass", result.assignments[0].resource_id)
+        self.assertEqual(1, len(node.resource_tokens()))
+        self.assertEqual("cass", node.resource_tokens()[0]["id"])
+
+        # Multiple tokens with distinct IDs are kept distinct
+        node2 = task("Two cassettes", "2026-09-01", "2026-09-03", [
+            {"id": "cass-1", "kind": "cassette", "label": "C", "header": "Cassettes"},
+            {"id": "cass-2", "kind": "cassette", "label": "C", "header": "Cassettes"},
+        ])
+        p2 = project("P2", [node2])
+        res2 = analyze_projects([p2])
+        self.assertEqual(2, len(res2.assignments))
+        self.assertEqual({"cass-1", "cass-2"}, {a.resource_id for a in res2.assignments})
 
     def test_excel_resource_sheets_reconcile_to_analyzer(self):
         first = task("A", "2026-09-01", "2026-09-03", [token("case-1", "C")])

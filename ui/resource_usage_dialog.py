@@ -1,23 +1,29 @@
 """Resource usage rundown, filters, allocation lanes, and settings UI."""
 from datetime import datetime, timedelta
 
+from utils.config_manager import ConfigManager
+from utils.workday_calculator import WorkdayCalculator
+
 from PyQt6.QtCore import QDate, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox,
     QFormLayout, QHeaderView, QHBoxLayout, QLabel, QMessageBox,
-    QTabWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QScrollArea, QTabWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 
-def _next_weekday(text):
+def _next_weekday(text, holidays=None, exclude_weekends=None):
     try:
-        value = datetime.strptime(text, "%Y-%m-%d") + timedelta(days=1)
+        datetime.strptime(text, "%Y-%m-%d")
     except (TypeError, ValueError):
         return "—"
-    while value.weekday() >= 5:
-        value += timedelta(days=1)
-    return value.strftime("%Y-%m-%d")
+    try:
+        res = WorkdayCalculator.get_next_workday(
+            text, holidays=holidays, exclude_weekends=exclude_weekends)
+        return res or "—"
+    except (TypeError, ValueError):
+        return "—" 
 
 
 class AllocationTimeline(QWidget):
@@ -32,8 +38,11 @@ class AllocationTimeline(QWidget):
     def set_data(self, assignments, conflicts):
         self.assignments = list(assignments)
         self.conflicts = list(conflicts)
-        lanes = len({a.resource_id for a in self.assignments})
-        self.setMinimumHeight(max(220, lanes * 54 + 55))
+        counts = {}
+        for assignment in self.assignments:
+            counts[assignment.resource_id] = counts.get(assignment.resource_id, 0) + 1
+        height = sum(max(54, 30 + count * 18) for count in counts.values())
+        self.setMinimumHeight(max(220, height + 55))
         self.update()
 
     def paintEvent(self, event):
@@ -59,8 +68,8 @@ class AllocationTimeline(QWidget):
         for conflict in self.conflicts:
             for assignment_id in conflict.assignment_ids:
                 conflict_lookup.setdefault(assignment_id, []).append(conflict)
-        for lane, ((_resource_id, label), assignments) in enumerate(by_resource.items()):
-            y = 35 + lane * 54
+        y = 35
+        for (_resource_id, label), assignments in by_resource.items():
             painter.setPen(QColor("#344054"))
             painter.drawText(8, y + 19, 156, 22,
                              Qt.AlignmentFlag.AlignVCenter, label)
@@ -71,7 +80,7 @@ class AllocationTimeline(QWidget):
                 end = datetime.strptime(assignment.end_date, "%Y-%m-%d")
                 x = left + int((start - first).days / span * width)
                 w = max(6, int(((end - start).days + 1) / span * width))
-                bar_y = y + min(offset, 2) * 10
+                bar_y = y + offset * 18
                 painter.fillRect(x, bar_y, w, 9, QColor("#93c5fd"))
                 painter.setPen(QColor("#1e3a5f"))
                 painter.drawText(x + 2, bar_y - 10, max(50, w), 18,
@@ -88,6 +97,7 @@ class AllocationTimeline(QWidget):
                     label_y = bar_y + 8 if cw >= 70 else bar_y + 20
                     painter.drawText(cx + 2, label_y,
                                      f"{conflict.overlap_workdays}d overlap")
+            y += max(54, 30 + len(assignments) * 18)
         painter.setPen(QColor("#667085"))
         painter.drawText(left, 16, first.strftime("%Y-%m-%d"))
         painter.drawText(left + width - 90, 16, 100, 20,
@@ -134,7 +144,7 @@ class ResourceUsageDialog(QDialog):
         self.summary = QTableWidget(0, 6)
         self.summary.setHorizontalHeaderLabels([
             "Resource", "Type", "Scheduled uses", "Planned workdays",
-            "Conflicts", "Next available"])
+            "Conflicts", "After last use"])
         self.details = QTableWidget(0, 9)
         self.details.setHorizontalHeaderLabels([
             "Resource", "Project", "Task path", "Location", "Start", "End",
@@ -146,9 +156,12 @@ class ResourceUsageDialog(QDialog):
             table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.details.itemDoubleClicked.connect(self._jump)
         self.timeline = AllocationTimeline()
+        timeline_scroll = QScrollArea()
+        timeline_scroll.setWidgetResizable(True)
+        timeline_scroll.setWidget(self.timeline)
         self.tabs.addTab(self.summary, "Summary")
         self.tabs.addTab(self.details, "Detailed Usage")
-        self.tabs.addTab(self.timeline, "Allocation Timeline")
+        self.tabs.addTab(timeline_scroll, "Allocation Timeline")
         layout.addWidget(self.tabs, 1)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
@@ -252,9 +265,16 @@ class ResourceUsageDialog(QDialog):
             ids = {a.id for a in uses}
             related = [c for c in conflicts if any(value in ids
                                                    for value in c.assignment_ids)]
+            latest_use = max(uses, key=lambda a: a.end_date or "")
+            cfg = ConfigManager.snapshot_project(getattr(latest_use, "project_id", None))
+            after_last = _next_weekday(
+                latest_use.end_date,
+                holidays=cfg.get("holidays"),
+                exclude_weekends=cfg.get("exclude_weekends", True)
+            )
             values = [uses[0].resource_label, uses[0].resource_type,
                       str(len(uses)), str(sum(a.workdays for a in uses)),
-                      str(len(related)), _next_weekday(max(a.end_date for a in uses))]
+                      str(len(related)), after_last]
             for col, value in enumerate(values):
                 self.summary.setItem(row, col, QTableWidgetItem(value))
         self.timeline.set_data(rows, conflicts)

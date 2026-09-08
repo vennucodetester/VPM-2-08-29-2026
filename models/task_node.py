@@ -72,16 +72,16 @@ class TaskNode:
 
     def resource_tokens(self):
         """All assigned metadata resources, retaining multiple same-kind values."""
+        from utils.resource_allocation import canonical_resource_kind, legacy_resource_id
         tokens = [dict(token) for token in self.task_tokens
                   if (token.get("kind") or "").casefold()
                   not in {"phase", "campaign", "header"}]
-        represented = {((t.get("kind") or "").casefold(),
+        represented = {(canonical_resource_kind(t.get("kind")),
                         (t.get("label") or "").strip().casefold())
                        for t in tokens}
         for kind, label in self.resources.items():
-            key = (kind.casefold(), str(label).strip().casefold())
+            key = (canonical_resource_kind(kind), str(label).strip().casefold())
             if label and key not in represented:
-                from utils.resource_allocation import legacy_resource_id
                 tokens.append({"kind": kind, "label": label,
                                "id": legacy_resource_id(kind, label)})
         return tokens
@@ -226,11 +226,9 @@ class TaskNode:
         is_rollup=True - called from update_dates_from_children; skip cascade to avoid loops
         visited      - set of node ids already touched in this cascade (recursion guard)
         """
-        # F1: honor dates_locked — but only for the start date.
-        # The end date is always auto-rolled-up from children (max of children's
-        # end dates), so we must let end-date writes through even when locked.
         if self.start_rule.get("mode") == "fixed" and not force and date_type == 'start':
-            return
+            if not (is_rollup and self.children):
+                return
 
         changed = False
         if date_type == 'start':
@@ -459,6 +457,9 @@ class TaskNode:
             self.set_date('start', min_start, is_rollup=True, visited=visited)
         if self.end_date != max_end:
             self.set_date('end', max_end, is_rollup=True, visited=visited)
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            self.start_date = min_start
+            self.end_date = max_end
 
     def update_owner_from_children(self):
         if not self.children:

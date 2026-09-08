@@ -168,23 +168,20 @@ def _normalize_to_projects(data) -> List[Dict]:
     if isinstance(data, list):
         return [{"name": "Project 1", "metadata": {}, "tasks": data}]
 
-    if not isinstance(data, dict):
-        return []
+    if isinstance(data, dict):
+        # v2.0+: explicit projects array
+        if "projects" in data and isinstance(data["projects"], list):
+            return data["projects"]
 
-    # v2.0+: explicit projects array
-    if "projects" in data and isinstance(data["projects"], list):
-        return data["projects"]
+        # v1.1: single-project envelope
+        if "tasks" in data and isinstance(data.get("tasks"), list):
+            return [{
+                "name": "Project 1",
+                "metadata": data.get("metadata", {}),
+                "tasks": data.get("tasks", []),
+            }]
 
-    # v1.1: single-project envelope
-    if "tasks" in data:
-        return [{
-            "name": "Project 1",
-            "metadata": data.get("metadata", {}),
-            "tasks": data.get("tasks", []),
-        }]
-
-    # Unknown shape — treat as empty so the app still opens
-    return []
+    raise ValueError("Unsupported or invalid project file format")
 
 
 # ---- legacy single-project API retained as thin wrappers ----

@@ -148,6 +148,17 @@ class IdentityStoryTests(unittest.TestCase):
         self.assertEqual(["Old"], [value.task_name for value in story.events])
         self.assertFalse(build_identity_story(projects, "missing").events)
 
+    def test_resources_only_legacy_assignment_appears_in_story(self):
+        from utils.resource_allocation import legacy_resource_id
+        node = task("Legacy room use", "2026-09-01", "2026-09-02")
+        node.resources = {"room": "Room 9"}
+        story = build_identity_story(
+            [project("P", "P", [node])],
+            legacy_resource_id("room", "Room 9"))
+        self.assertEqual(["Legacy room use"],
+                         [value.task_name for value in story.events])
+        self.assertEqual("Room 9", story.identity_label)
+
     def test_independent_overlap_and_nonoverlap_calendar_rule(self):
         selected = token("case-1", "Case")
         first = task("First", "2026-09-01", "2026-09-10", [selected])

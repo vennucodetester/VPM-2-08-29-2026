@@ -95,6 +95,21 @@ class SchedulingRuleTests(unittest.TestCase):
         self.assertEqual(node.start_rule, restored.start_rule)
         self.assertEqual(node.end_rule, restored.end_rule)
 
+    def test_f03_circular_tasks_remain_stable_and_diagnose_conflict(self):
+        a = self._task("Task A", "2026-09-07", 2)
+        b = self._task("Task B", "2026-09-07", 2)
+        a.start_rule = {"mode": "continue_after", "task_id": b.id, "field": "end"}
+        b.start_rule = {"mode": "continue_after", "task_id": a.id, "field": "end"}
+
+        schedule([a, b])
+        self.assertTrue(any("cycle" in c.lower() for c in a.schedule_conflicts))
+        self.assertTrue(any("cycle" in c.lower() for c in b.schedule_conflicts))
+        dates_1 = (a.start_date, a.end_date, b.start_date, b.end_date)
+
+        schedule([a, b])
+        dates_2 = (a.start_date, a.end_date, b.start_date, b.end_date)
+        self.assertEqual(dates_1, dates_2)
+
 
 class DateRuleUiTests(unittest.TestCase):
     @classmethod
@@ -142,6 +157,127 @@ class DateRuleUiTests(unittest.TestCase):
         try:
             tree.load_project([parent])
             self.assertEqual("2026-09-30", second.start_date)
+        finally:
+            tree.close()
+
+    def test_f03_ui_rule_creates_cycle_detects_automatic_successor(self):
+        from ui.tree_grid_view import TreeGridView
+        tree = TreeGridView()
+        try:
+            a = TaskNode("Task A")
+            b = TaskNode("Task B")
+            b.start_rule = {"mode": "automatic"}
+            tree.load_project([a, b])
+            # A depending on its automatic successor B must be flagged as cycle
+            self.assertTrue(tree._rule_creates_cycle(a, {"mode": "continue_after", "task_id": b.id}))
+
+            p = TaskNode("Parent")
+            c1 = TaskNode("C1", parent=p)
+            c2 = TaskNode("C2", parent=p)
+            c2.start_rule = {"mode": "automatic"}
+            p.children = [c1, c2]
+            tree.load_project([p])
+            # C1 depending on its automatic sibling successor C2 must be flagged as cycle
+            self.assertTrue(tree._rule_creates_cycle(c1, {"mode": "continue_after", "task_id": c2.id}))
+            # Parent depending on its descendant must be flagged as cycle
+            self.assertTrue(tree._rule_creates_cycle(p, {"mode": "continue_after", "task_id": c2.id}))
+            # Legitimate child same_as parent start must be allowed
+            self.assertFalse(tree._rule_creates_cycle(c1, {"mode": "same_as", "task_id": p.id, "field": "start"}))
+        finally:
+            tree.close()
+
+    def test_forward_reference_updates_automatic_root_follower_in_one_pass(self):
+        source = TaskNode("Source")
+        follower = TaskNode("Follower")
+        target = TaskNode("Target")
+        source.start_rule = {"mode": "same_as", "task_id": target.id,
+                             "field": "start"}
+        source.end_rule = {"mode": "duration", "days": 2}
+        follower.start_rule = {"mode": "automatic"}
+        follower.end_rule = {"mode": "duration", "days": 2}
+        target.start_rule = {"mode": "fixed", "date": "2026-11-02"}
+        target.end_rule = {"mode": "duration", "days": 2}
+        schedule([source, follower, target])
+        once = [(node.start_date, node.end_date)
+                for node in (source, follower, target)]
+        self.assertGreater(follower.start_date, source.end_date)
+        schedule([source, follower, target])
+        self.assertEqual(once, [(node.start_date, node.end_date)
+                                for node in (source, follower, target)])
+
+    def test_f03_end_rule_cycle_remains_stable_and_diagnoses_conflict(self):
+        a = TaskNode("A")
+        a.start_date = "2026-09-07"
+        a.start_rule = {"mode": "fixed", "date": "2026-09-07"}
+
+        b = TaskNode("B")
+        b.start_date = "2026-09-08"
+        b.start_rule = {"mode": "automatic"}
+        b.end_rule = {"mode": "duration", "days": 1}
+
+        # A's end depends on B's end, while B is automatic after A (cycle)
+        a.end_rule = {"mode": "same_as", "task_id": b.id, "field": "end"}
+
+        # Independent task C that schedules normally
+        c = TaskNode("C")
+        c.start_rule = {"mode": "fixed", "date": "2026-09-14"}
+        c.end_rule = {"mode": "duration", "days": 2}
+
+        roots = [a, b, c]
+        schedule(roots)
+        dates_after_call1 = (a.start_date, a.end_date, b.start_date, b.end_date)
+
+        # Both cyclic tasks must report cycle conflict
+        self.assertTrue(any("cycle" in conf.lower() for conf in a.schedule_conflicts))
+        self.assertTrue(any("cycle" in conf.lower() for conf in b.schedule_conflicts))
+        # Unaffected task C has no conflicts and calculated end date
+        self.assertEqual([], c.schedule_conflicts)
+        self.assertEqual("2026-09-15", c.end_date)
+
+        # Second schedule call must be strictly idempotent with zero date drift
+        schedule(roots)
+        dates_after_call2 = (a.start_date, a.end_date, b.start_date, b.end_date)
+        self.assertEqual(dates_after_call1, dates_after_call2)
+        self.assertEqual("2026-09-15", c.end_date)
+
+    def test_f16_parallel_sibling_does_not_trigger_false_cycle_warning(self):
+        p = TaskNode("Parent")
+        p.start_date = "2026-09-07"
+        p.start_rule = {"mode": "fixed", "date": "2026-09-07"}
+        p.end_rule = {"mode": "duration", "days": 5}
+
+        a = TaskNode("A")
+        b = TaskNode("B")
+        b.is_parallel = True
+        b.start_rule = {"mode": "automatic"}
+        b.end_rule = {"mode": "duration", "days": 1}
+
+        # A starts at same time as parallel sibling B
+        a.start_rule = {"mode": "same_as", "task_id": b.id, "field": "start"}
+        a.end_rule = {"mode": "duration", "days": 1}
+
+        p.children = [a, b]
+        a.parent = p
+        b.parent = p
+
+        schedule([p])
+        self.assertEqual("2026-09-07", a.start_date)
+        self.assertEqual("2026-09-07", b.start_date)
+        # Valid parallel sibling must NOT receive false cycle warning
+        self.assertEqual([], a.schedule_conflicts)
+        self.assertEqual([], b.schedule_conflicts)
+
+        # UI cycle validator must allow this valid parallel relationship
+        from ui.tree_grid_view import TreeGridView
+        tree = TreeGridView()
+        try:
+            tree.load_project([p])
+            rule = {"mode": "same_as", "task_id": b.id, "field": "start"}
+            self.assertFalse(tree._rule_creates_cycle(a, rule))
+
+            # When B is made sequential (is_parallel=False), it becomes a real cycle
+            b.is_parallel = False
+            self.assertTrue(tree._rule_creates_cycle(a, rule))
         finally:
             tree.close()
 

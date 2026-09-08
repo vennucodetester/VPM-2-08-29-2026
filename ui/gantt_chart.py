@@ -580,6 +580,12 @@ class GanttTimeline(QWidget):
     # ---- predecessor lookup (shared by bars + arrows) ------------------
 
     def _find_predecessor(self, task: TaskNode) -> Optional[TaskNode]:
+        mode = (getattr(task, "start_rule", None) or {}).get("mode", "automatic")
+        if mode == "fixed":
+            return None
+        if mode in ("same_as", "continue_after"):
+            target_id = (task.start_rule or {}).get("task_id") or task.predecessor_id
+            return self.node_map.get(target_id)
         if task.predecessor_id and task.predecessor_id in self.node_map:
             return self.node_map[task.predecessor_id]
         if task.parent and not task.is_parallel:
@@ -888,7 +894,13 @@ class GanttChartWidget(QWidget):
 
             # Find upstream predecessor
             pred: Optional[TaskNode] = None
-            if current.predecessor_id and current.predecessor_id in self.node_map:
+            mode = (getattr(current, "start_rule", None) or {}).get("mode", "automatic")
+            if mode == "fixed":
+                pred = None
+            elif mode in ("same_as", "continue_after"):
+                target_id = (current.start_rule or {}).get("task_id") or current.predecessor_id
+                pred = self.node_map.get(target_id)
+            elif current.predecessor_id and current.predecessor_id in self.node_map:
                 pred = self.node_map[current.predecessor_id]
             elif current.parent:
                 sibs = current.parent.children

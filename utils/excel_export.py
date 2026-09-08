@@ -95,9 +95,19 @@ def _unique_sheet_name(name: str, seen: set) -> str:
     return candidate
 
 
-def _flatten(roots: List[TaskNode]) -> List[Dict]:
+def _flatten(roots: List[TaskNode], metadata=None) -> List[Dict]:
     """Post-order-preserving depth-first flatten. Matches tree visual order."""
     rows = []
+    metadata = metadata or {}
+
+    def duration(node):
+        if not metadata or not node.start_date or not node.end_date:
+            return node.duration or ""
+        from utils.resource_allocation import occupied_dates
+        return str(len(occupied_dates(
+            node.start_date, node.end_date,
+            metadata.get("holidays", []) or [],
+            bool(metadata.get("exclude_weekends", True)))))
 
     def visit(node: TaskNode, depth: int):
         pred_id = node.predecessor_id or ""
@@ -113,12 +123,14 @@ def _flatten(roots: List[TaskNode]) -> List[Dict]:
             "Task Name": node.name or "",
             "Start": node.start_date or "",
             "End": node.end_date or "",
-            "Duration": node.duration or "",
+            "Duration": duration(node),
             "Potential $": node.vave_display_potential(),
             "Realized $": node.vave_display_realized(),
             "Status": node.status or "",
             "Owner": owner_text,
             "Depends On": pred_id,  # resolved to name by caller
+            "_Start Rule": dict(node.start_rule),
+            "_End Rule": dict(node.end_rule),
             "Notes": (node.notes or "").replace("\r", ""),
         })
         for c in node.children:
@@ -140,10 +152,34 @@ def _resolve_pred_names(rows: List[Dict], roots: List[TaskNode]):
     for r in roots:
         collect(r)
 
+    def format_offset(rule):
+        try:
+            offset = int(rule.get("offset", 0) or 0)
+        except (TypeError, ValueError):
+            offset = 0
+        if offset == 0:
+            return ""
+        unit = str(rule.get("offset_unit") or "workdays").replace("_", " ")
+        sign = "+" if offset > 0 else ""
+        return f" {sign}{offset} {unit}"
+
     for row in rows:
-        pid = row["Depends On"]
-        if pid:
-            row["Depends On"] = id_to_name.get(pid, "(missing)")
+        relationships = []
+        start = row.get("_Start Rule", {})
+        end = row.get("_End Rule", {})
+        if start.get("mode") == "continue_after":
+            relationships.append(
+                f"Start after {id_to_name.get(start.get('task_id'), '(missing)')} "
+                f"{start.get('field', 'end')}{format_offset(start)}")
+        elif start.get("mode") == "same_as":
+            relationships.append(
+                f"Start = {id_to_name.get(start.get('task_id'), '(missing)')} "
+                f"{start.get('field', 'start')}{format_offset(start)}")
+        if end.get("mode") == "same_as":
+            relationships.append(
+                f"End = {id_to_name.get(end.get('task_id'), '(missing)')} "
+                f"{end.get('field', 'end')}{format_offset(end)}")
+        row["Depends On"] = "; ".join(relationships)
 
 
 def _has_manual_vave_value(node: TaskNode) -> bool:
@@ -524,7 +560,7 @@ def export_projects(projects: List[Dict], filename: str,
             cell.font = header_font
             cell.fill = header_fill
 
-        rows = _flatten(roots)
+        rows = _flatten(roots, metadata)
         _resolve_pred_names(rows, roots)
         for row in rows:
             ws.append([row[c] for c in task_columns])
