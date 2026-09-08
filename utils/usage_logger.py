@@ -511,11 +511,30 @@ def sync_repo_telemetry(dest=None, background=False, include_report=True,
         timeout=timeout)
 
 
+def dialog_outcome(dialog, result) -> str:
+    """Map a finished dialog to a telemetry outcome.
+
+    timed_exec treats a falsy exec() result as cancel, but some exits are
+    intentional navigation (notes Esc → overall notes / quick capture) and
+    must not count as cancel friction. A dialog may set telemetry_outcome,
+    or the notes-specific clear_task_note_context flag.
+    """
+    override = None
+    getter = getattr(dialog, "property", None)
+    if callable(getter):
+        override = getter("telemetry_outcome")
+        if not override and getter("clear_task_note_context"):
+            override = "navigated"
+    if override:
+        return str(override)
+    return "ok" if result else "cancel"
+
+
 def timed_exec(dialog, name: str):
     start = time.time()
     try:
         result = dialog.exec()
-        usage.log("dialog", name=name, outcome="ok" if result else "cancel",
+        usage.log("dialog", name=name, outcome=dialog_outcome(dialog, result),
                   ms_open=int((time.time() - start) * 1000))
         return result
     except Exception as exc:
