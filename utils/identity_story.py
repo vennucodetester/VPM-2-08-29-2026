@@ -63,6 +63,7 @@ class IdentityStory:
     overlaps: List[IdentityOverlap] = field(default_factory=list)
     unscheduled_events: List[IdentityEvent] = field(default_factory=list)
     connected_identities: List[ConnectedIdentity] = field(default_factory=list)
+    overlaps_enabled: bool = True
 
     @property
     def all_events(self):
@@ -237,8 +238,39 @@ def event_context_label(event, connection_limit=2):
     return " · ".join(str(value) for value in parts if str(value).strip())
 
 
+def identity_flag_overlaps(identity_id, items=None, definitions=None):
+    """Whether this identity opted into overlap highlighting / warnings.
+
+    Metadata ``flag_overlaps`` is the visible checkbox. Resource definitions
+    use ``conflict_enabled``. Missing entries default to off (opt-in).
+    """
+    identity_id = str(identity_id or "")
+    if not identity_id:
+        return False
+    for item in items or []:
+        if str(item.get("id") or "") != identity_id:
+            continue
+        if "flag_overlaps" in item:
+            return bool(item.get("flag_overlaps"))
+        if "conflict_enabled" in item:
+            return bool(item.get("conflict_enabled"))
+        # Catalog row exists; the Metadata checkbox defaults to off.
+        return False
+    for definition in definitions or []:
+        if isinstance(definition, dict):
+            def_id = definition.get("id")
+            enabled = definition.get("conflict_enabled",
+                                     definition.get("flag_overlaps", False))
+        else:
+            def_id = getattr(definition, "id", "")
+            enabled = getattr(definition, "conflict_enabled", False)
+        if str(def_id or "") == identity_id:
+            return bool(enabled)
+    return False
+
+
 def build_identity_story(projects, identity_id, identity_label=None,
-                         identity_kind=None) -> IdentityStory:
+                         identity_kind=None, include_overlaps=True) -> IdentityStory:
     """Collect the complete cross-project story for one permanent option ID."""
     identity_id = str(identity_id or "")
     scheduled, unscheduled = [], []
@@ -282,18 +314,19 @@ def build_identity_story(projects, identity_id, identity_label=None,
     unscheduled.sort(key=lambda event: (
         event.project_name.casefold(), event.task_path.casefold(), event.event_id))
     overlaps = []
-    for index, first in enumerate(scheduled):
-        for second in scheduled[index + 1:]:
-            if not _independent(first, second):
-                continue
-            start = max(first.start_date, second.start_date)
-            end = min(first.end_date, second.end_date)
-            if start <= end:
-                overlaps.append(IdentityOverlap(
-                    first.event_id, second.event_id, start, end))
-    overlaps.sort(key=lambda value: (
-        value.overlap_start, value.overlap_end,
-        value.first_event_id, value.second_event_id))
+    if include_overlaps:
+        for index, first in enumerate(scheduled):
+            for second in scheduled[index + 1:]:
+                if not _independent(first, second):
+                    continue
+                start = max(first.start_date, second.start_date)
+                end = min(first.end_date, second.end_date)
+                if start <= end:
+                    overlaps.append(IdentityOverlap(
+                        first.event_id, second.event_id, start, end))
+        overlaps.sort(key=lambda value: (
+            value.overlap_start, value.overlap_end,
+            value.first_event_id, value.second_event_id))
     return IdentityStory(
         identity_id=identity_id,
         identity_label=str(identity_label or inferred_label or "Identity"),
@@ -304,6 +337,7 @@ def build_identity_story(projects, identity_id, identity_label=None,
         connected_identities=sorted(
             connections.values(), key=lambda value:
             (value.kind.casefold(), value.label.casefold(), value.identity_id)),
+        overlaps_enabled=bool(include_overlaps),
     )
 
 

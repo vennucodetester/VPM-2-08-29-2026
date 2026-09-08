@@ -9,7 +9,9 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.identity_story_panel import IdentityStoryPanel
-from utils.identity_story import build_identity_story, find_duplicate_identities
+from utils.identity_story import (
+    build_identity_story, find_duplicate_identities, identity_flag_overlaps,
+)
 
 
 TAB_LABELS = {
@@ -90,8 +92,9 @@ class OptionTable(QTableWidget):
         self.horizontalHeader().setSectionResizeMode(
             2, QHeaderView.ResizeMode.ResizeToContents)
         self.horizontalHeaderItem(2).setToolTip(
-            "Checked: overlapping scheduled uses produce a conflict warning. "
-            "Unchecked: reuse and overlaps remain visible in Story without warnings.")
+            "Checked: overlapping scheduled uses produce a conflict warning "
+            "and appear as overlap bands on the Story timeline. "
+            "Unchecked: reuse is allowed and Story draws no overlap graph.")
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.setEditTriggers(QAbstractItemView.EditTrigger.EditKeyPressed)
         self.setAlternatingRowColors(True)
@@ -127,7 +130,9 @@ class OptionTable(QTableWidget):
         flag.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         flag.setToolTip(
             "Enable only when overlapping scheduled use of this exact identity "
-            "should be flagged. Non-overlapping reuse is always allowed.")
+            "should be flagged and drawn on the Story timeline. "
+            "Unchecked identities keep their history bars but hide overlap "
+            "bands, shading, and labels.")
         if self.kind.casefold() == "phase":
             flag.setFlags(flag.flags() & ~Qt.ItemFlag.ItemIsEnabled)
             flag.setToolTip("Project phases are repeatable and do not create conflicts.")
@@ -217,7 +222,8 @@ class MetadataEditorDialog(QDialog):
         layout.addWidget(QLabel(
             "Double-click an identity to open its Story. F2 or Edit changes a value; "
             "double-click a tab to rename it; + adds a list. Check 'Flag overlapping "
-            "use' only when overlapping schedules should create a warning."))
+            "use' only when overlapping schedules should create a warning and "
+            "appear on the Story graph."))
         duplicates = find_duplicate_identities(items)
         if duplicates:
             warning = QLabel(
@@ -350,10 +356,23 @@ class MetadataEditorDialog(QDialog):
         if answer == QMessageBox.StandardButton.Yes:
             table.delete_selected_rows()
 
+    def _flag_overlaps_for(self, identity_id):
+        for table in self.tables.values():
+            for row in range(table.rowCount()):
+                name_item = table.item(row, 0)
+                if (name_item and
+                        str(name_item.data(Qt.ItemDataRole.UserRole) or "") ==
+                        str(identity_id)):
+                    flag = table.item(row, 2)
+                    return bool(flag and
+                                flag.checkState() == Qt.CheckState.Checked)
+        return identity_flag_overlaps(identity_id)
+
     def _show_story(self, identity_id, label, kind):
         self.story_panel.set_story(build_identity_story(
             self.projects, identity_id, identity_label=label,
-            identity_kind=kind))
+            identity_kind=kind,
+            include_overlaps=self._flag_overlaps_for(identity_id)))
 
     def _tab_changed(self, index):
         if (hasattr(self, "_plus_page") and index >= 0 and

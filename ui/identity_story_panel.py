@@ -383,10 +383,12 @@ class IdentityStoryPanel(QWidget):
         self.timeline.jumpRequested.connect(self.jumpRequested)
 
     def set_story(self, story):
-        self.heading.setText(
+        heading = (
             f"Story: {story.identity_label} · {len(story.events)} scheduled · "
-            f"{len(story.unscheduled_events)} unscheduled · "
-            f"{len(story.overlaps)} overlap(s)")
+            f"{len(story.unscheduled_events)} unscheduled")
+        if getattr(story, "overlaps_enabled", True):
+            heading += f" · {len(story.overlaps)} overlap(s)"
+        self.heading.setText(heading)
         self.timeline.set_story(story)
         self.connections.set_story(story)
         self.tabs.show()
