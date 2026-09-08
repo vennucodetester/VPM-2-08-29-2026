@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import date
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -15,6 +16,8 @@ from PyQt6.QtWidgets import (QApplication, QAbstractItemView, QDialog,
 from models.task_node import TaskNode
 from ui.identity_story_panel import (
     IdentityStoryDialog, IdentityStoryPanel, IdentityTimeline,
+    bar_date_caption, bar_date_placement, format_axis_tick,
+    format_story_date, story_axis_ticks,
 )
 from ui.metadata_editor import MetadataEditorDialog
 from ui.tree_grid_view import TreeGridView
@@ -101,6 +104,79 @@ class IdentityStoryUiTests(unittest.TestCase):
         self.assertEqual(1, len(spy))
         self.assertEqual([event.project_id, event.task_id], list(spy[0]))
         timeline.close()
+
+    def test_story_axis_ticks_keep_range_ends_and_spaced_months(self):
+        first, last = date(2026, 7, 31), date(2026, 10, 29)
+        ticks = story_axis_ticks(first, last)
+        self.assertEqual(first, ticks[0])
+        self.assertEqual(last, ticks[-1])
+        self.assertIn(date(2026, 9, 1), ticks)
+        self.assertIn(date(2026, 10, 1), ticks)
+        # Aug 1 sits one day after Jul 31 — too close for a second label.
+        self.assertNotIn(date(2026, 8, 1), ticks)
+        self.assertEqual("Jul 31, 2026", format_axis_tick(first, first, last))
+        self.assertEqual("Sep", format_axis_tick(date(2026, 9, 1), first, last))
+        self.assertEqual("Oct 29, 2026", format_axis_tick(last, first, last))
+
+    def test_bar_date_helpers_format_and_place_labels(self):
+        self.assertEqual("Aug 31", format_story_date("2026-08-31"))
+        self.assertEqual("Sep 5, 2026",
+                         format_story_date("2026-09-05", with_year=True))
+        self.assertEqual("Aug 31 → Sep 18",
+                         bar_date_caption("2026-08-31", "2026-09-18"))
+        self.assertEqual("split", bar_date_placement(200, "Aug 31", "Sep 18"))
+        self.assertEqual("after", bar_date_placement(20, "Aug 31", "Sep 18"))
+
+    def test_timeline_exposes_start_and_end_dates_for_every_bar(self):
+        timeline = IdentityTimeline()
+        timeline.resize(900, 420)
+        timeline.set_story(story_fixture())
+        geometry = timeline.geometry_snapshot(900)
+        self.assertGreaterEqual(len(geometry["axis_ticks"]), 2)
+        self.assertEqual(geometry["range"][0], geometry["axis_ticks"][0]["date"])
+        self.assertEqual(geometry["range"][1], geometry["axis_ticks"][-1]["date"])
+        self.assertTrue(all(tick["label"] for tick in geometry["axis_ticks"]))
+
+        self.assertEqual(len(geometry["bars"]), len(geometry["bar_dates"]))
+        expected = {
+            ("2026-08-31", "2026-09-18"),
+            ("2026-08-31", "2026-09-11"),
+            ("2026-10-05", "2026-10-23"),
+        }
+        seen = {(info["start_date"], info["end_date"])
+                for info in geometry["bar_dates"]}
+        self.assertEqual(expected, seen)
+        for info in geometry["bar_dates"]:
+            self.assertEqual(format_story_date(info["start_date"]),
+                             info["start_text"])
+            self.assertEqual(format_story_date(info["end_date"]),
+                             info["end_text"])
+            self.assertEqual(
+                bar_date_caption(info["start_date"], info["end_date"]),
+                info["caption"])
+            self.assertIn(info["placement"], {"split", "after", "under"})
+            self.assertEqual(info["end_x"],
+                             next(rect.right() for rect, event in
+                                  geometry["bars"]
+                                  if event.event_id == info["event_id"]))
+        painted = timeline.grab()
+        self.assertFalse(painted.isNull())
+        self.assertGreater(painted.width(), 0)
+
+    def test_short_bar_keeps_an_end_date_label_beside_or_under_the_bar(self):
+        selected = token("case-1", "RLN2MA-1")
+        story = build_identity_story([{
+            "id": "p", "name": "P",
+            "roots": [task("One day", "2026-09-01", "2026-09-01", [selected])],
+        }], "case-1", "RLN2MA-1", "case")
+        timeline = IdentityTimeline()
+        timeline.set_story(story)
+        geometry = timeline.geometry_snapshot(900)
+        self.assertEqual(1, len(geometry["bar_dates"]))
+        info = geometry["bar_dates"][0]
+        self.assertEqual("Sep 1 → Sep 1", info["caption"])
+        self.assertIn(info["placement"], {"after", "under"})
+        self.assertLess(geometry["bars"][0][0].width(), 40)
 
     def test_empty_story_has_clear_message(self):
         timeline = IdentityTimeline()
