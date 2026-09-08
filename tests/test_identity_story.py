@@ -3,7 +3,7 @@ import unittest
 from models.task_node import TaskNode
 from utils.identity_story import (
     build_identity_story, event_context_label, find_duplicate_identities,
-    merge_identity_ids, shortest_unique_event_labels,
+    identity_flag_overlaps, merge_identity_ids, shortest_unique_event_labels,
 )
 
 
@@ -102,6 +102,58 @@ class IdentityStoryTests(unittest.TestCase):
         self.assertEqual({"Alpha", "Beta"},
                          {event_context_label(value) for value in story.events})
 
+    def test_unique_leaf_still_keeps_known_parent(self):
+        selected = token("case-1", "RLN2MA-2")
+        first_parent = task("CAP Tube testing - MT (Room 7)",
+                            "2026-08-01", "2026-10-31")
+        first = task("Lab Testing", "2026-08-31", "2026-09-18",
+                     [selected], parent=first_parent)
+        first_parent.children = [first]
+        second_parent = task("LT Aluminum coil", "2026-08-01", "2026-10-31")
+        second = task("[Lab Testing] - no clear timeline yet",
+                      "2026-10-01", "2026-10-12", [selected],
+                      parent=second_parent)
+        second_parent.children = [second]
+        story = build_identity_story(
+            [project("P", "VAVE-MB 2.0", [first_parent, second_parent])],
+            "case-1")
+        self.assertEqual({
+            "CAP Tube testing - MT (Room 7) › Lab Testing",
+            "LT Aluminum coil › [Lab Testing] - no clear timeline yet",
+        }, set(shortest_unique_event_labels(story.events).values()))
+
+    def test_same_leaf_name_keeps_sibling_parent_depth(self):
+        selected = token("doe-1", "DOE - Type 2", "activity")
+        roots = []
+        for name, start, end in (
+                ("CAP Tube testing - MT (Room 7)",
+                 "2026-08-31", "2026-09-18"),
+                ("Low Torque compressor - MT",
+                 "2026-09-01", "2026-09-20"),
+        ):
+            activity = task(name, "2026-08-01", "2026-10-31")
+            lab = task("Lab Testing", start, end, parent=activity)
+            doe = task("DOE - Type 2", start, end, [selected], parent=lab)
+            activity.children = [lab]
+            lab.children = [doe]
+            roots.append(activity)
+        unique_activity = task("LT Aluminum coil", "2026-08-01", "2026-10-31")
+        unique_lab = task("[Lab Testing] - no clear timeline yet",
+                          "2026-09-20", "2026-10-05", parent=unique_activity)
+        unique_doe = task("DOE - Type 2", "2026-09-20", "2026-10-05",
+                          [selected], parent=unique_lab)
+        unique_activity.children = [unique_lab]
+        unique_lab.children = [unique_doe]
+        roots.append(unique_activity)
+        story = build_identity_story(
+            [project("P", "VAVE-MB 2.0", roots)], "doe-1")
+        self.assertEqual({
+            "CAP Tube testing - MT (Room 7) › Lab Testing › DOE - Type 2",
+            "Low Torque compressor - MT › Lab Testing › DOE - Type 2",
+            ("LT Aluminum coil › [Lab Testing] - no clear timeline yet › "
+             "DOE - Type 2"),
+        }, set(shortest_unique_event_labels(story.events).values()))
+
     def test_parent_leaf_completed_undated_and_cross_project_collection(self):
         selected = token("case-1", "RLN2MA-1")
         parent = task("Parent", "2026-08-31", "2026-09-18", [selected])
@@ -167,9 +219,30 @@ class IdentityStoryTests(unittest.TestCase):
         story = build_identity_story([project("P", "P", [first, second, later])],
                                      "case-1")
         self.assertEqual(1, len(story.overlaps))
+        self.assertTrue(story.overlaps_enabled)
         self.assertEqual(("2026-09-05", "2026-09-10"),
                          (story.overlaps[0].overlap_start,
                           story.overlaps[0].overlap_end))
+
+    def test_unchecked_overlap_flag_skips_overlap_records(self):
+        selected = token("doe-1", "DOE - Type 2", "activity")
+        first = task("First", "2026-09-01", "2026-09-10", [selected])
+        second = task("Second", "2026-09-05", "2026-09-12", [selected])
+        story = build_identity_story(
+            [project("P", "P", [first, second])], "doe-1",
+            include_overlaps=False)
+        self.assertEqual(2, len(story.events))
+        self.assertEqual([], story.overlaps)
+        self.assertFalse(story.overlaps_enabled)
+        self.assertFalse(identity_flag_overlaps(
+            "doe-1", [{"id": "doe-1", "flag_overlaps": False}]))
+        self.assertTrue(identity_flag_overlaps(
+            "doe-1", [{"id": "doe-1", "flag_overlaps": True}]))
+        self.assertFalse(identity_flag_overlaps("missing"))
+        self.assertFalse(identity_flag_overlaps(
+            "doe-1",
+            [{"id": "doe-1", "name": "DOE - Type 2"}],
+            [{"id": "doe-1", "conflict_enabled": True}]))
 
     def test_parent_and_descendant_do_not_overlap_each_other(self):
         selected = token("case-1", "Case")
