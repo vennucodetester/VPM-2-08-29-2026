@@ -237,9 +237,26 @@ def event_context_label(event, connection_limit=2):
     return " · ".join(str(value) for value in parts if str(value).strip())
 
 
+def identity_flag_overlaps(options, identity_id) -> bool:
+    """Return the Metadata 'Flag overlapping use' value for one identity."""
+    identity_id = str(identity_id or "")
+    for option in options or []:
+        if str(option.get("id") or "") != identity_id:
+            continue
+        if "flag_overlaps" in option:
+            return bool(option.get("flag_overlaps"))
+        return bool(option.get("conflict_enabled", False))
+    return False
+
+
 def build_identity_story(projects, identity_id, identity_label=None,
-                         identity_kind=None) -> IdentityStory:
-    """Collect the complete cross-project story for one permanent option ID."""
+                         identity_kind=None, flag_overlaps=True) -> IdentityStory:
+    """Collect the complete cross-project story for one permanent option ID.
+
+    ``flag_overlaps`` is the Metadata checkbox. When it is unchecked, the
+    story still lists every use of the identity but does not compute overlap
+    records, so the timeline will not draw overlap series or shading.
+    """
     identity_id = str(identity_id or "")
     scheduled, unscheduled = [], []
     inferred_label, inferred_kind = "", "identity"
@@ -282,18 +299,19 @@ def build_identity_story(projects, identity_id, identity_label=None,
     unscheduled.sort(key=lambda event: (
         event.project_name.casefold(), event.task_path.casefold(), event.event_id))
     overlaps = []
-    for index, first in enumerate(scheduled):
-        for second in scheduled[index + 1:]:
-            if not _independent(first, second):
-                continue
-            start = max(first.start_date, second.start_date)
-            end = min(first.end_date, second.end_date)
-            if start <= end:
-                overlaps.append(IdentityOverlap(
-                    first.event_id, second.event_id, start, end))
-    overlaps.sort(key=lambda value: (
-        value.overlap_start, value.overlap_end,
-        value.first_event_id, value.second_event_id))
+    if flag_overlaps:
+        for index, first in enumerate(scheduled):
+            for second in scheduled[index + 1:]:
+                if not _independent(first, second):
+                    continue
+                start = max(first.start_date, second.start_date)
+                end = min(first.end_date, second.end_date)
+                if start <= end:
+                    overlaps.append(IdentityOverlap(
+                        first.event_id, second.event_id, start, end))
+        overlaps.sort(key=lambda value: (
+            value.overlap_start, value.overlap_end,
+            value.first_event_id, value.second_event_id))
     return IdentityStory(
         identity_id=identity_id,
         identity_label=str(identity_label or inferred_label or "Identity"),

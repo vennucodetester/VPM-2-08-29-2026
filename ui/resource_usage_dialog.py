@@ -293,7 +293,8 @@ class ResourceSettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(
             "Flag overlapping use is also available beside each Metadata option. "
-            "Unchecked identities remain visible in usage and Story views."))
+            "Unchecked identities remain visible in usage and Story views "
+            "without overlap shading or conflict warnings."))
         self.table = QTableWidget(len(definitions), 8)
         self.table.setHorizontalHeaderLabels([
             "Resource", "Type", "Capacity", "Flag overlapping use", "Active",

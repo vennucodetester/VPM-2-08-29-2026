@@ -3,7 +3,7 @@ import unittest
 from models.task_node import TaskNode
 from utils.identity_story import (
     build_identity_story, event_context_label, find_duplicate_identities,
-    merge_identity_ids, shortest_unique_event_labels,
+    identity_flag_overlaps, merge_identity_ids, shortest_unique_event_labels,
 )
 
 
@@ -170,6 +170,34 @@ class IdentityStoryTests(unittest.TestCase):
         self.assertEqual(("2026-09-05", "2026-09-10"),
                          (story.overlaps[0].overlap_start,
                           story.overlaps[0].overlap_end))
+
+    def test_unchecked_overlap_flag_omits_overlap_records(self):
+        selected = token("doe-type-2", "DOE -Type 2", "activity")
+        first = task("First", "2026-09-01", "2026-09-10", [selected])
+        second = task("Second", "2026-09-05", "2026-09-12", [selected])
+        projects = [project("P", "P", [first, second])]
+        hidden = build_identity_story(
+            projects, "doe-type-2", flag_overlaps=False)
+        shown = build_identity_story(
+            projects, "doe-type-2", flag_overlaps=True)
+        self.assertEqual(2, len(hidden.events))
+        self.assertEqual([], hidden.overlaps)
+        self.assertEqual(1, len(shown.overlaps))
+        self.assertEqual(("2026-09-05", "2026-09-10"),
+                         (shown.overlaps[0].overlap_start,
+                          shown.overlaps[0].overlap_end))
+
+    def test_identity_flag_overlaps_reads_metadata_checkbox(self):
+        options = [
+            {"id": "doe-type-2", "name": "DOE -Type 2",
+             "flag_overlaps": False},
+            {"id": "case-1", "name": "RLN2MA-1", "flag_overlaps": True},
+            {"id": "legacy-1", "conflict_enabled": True},
+        ]
+        self.assertFalse(identity_flag_overlaps(options, "doe-type-2"))
+        self.assertTrue(identity_flag_overlaps(options, "case-1"))
+        self.assertTrue(identity_flag_overlaps(options, "legacy-1"))
+        self.assertFalse(identity_flag_overlaps(options, "missing"))
 
     def test_parent_and_descendant_do_not_overlap_each_other(self):
         selected = token("case-1", "Case")

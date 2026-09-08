@@ -16,11 +16,13 @@ from models.task_node import TaskNode
 from ui.identity_story_panel import (
     IdentityStoryDialog, IdentityStoryPanel, IdentityTimeline,
 )
+from ui.main_window import MainWindow
 from ui.metadata_editor import MetadataEditorDialog
 from ui.tree_grid_view import TreeGridView
 from vpm_tracker_core import Columns
 from utils.identity_story import build_identity_story
 from utils.identity_story import shortest_unique_event_labels
+from utils.resource_allocation import ResourceDefinition
 from utils.usage_logger import UsageLogger, timed_exec
 
 
@@ -64,6 +66,29 @@ class IdentityStoryUiTests(unittest.TestCase):
         band, overlap = geometry["overlaps"][0]
         self.assertGreater(band.width(), 0)
         self.assertEqual("2026-09-11", overlap.overlap_end)
+
+    def test_unchecked_overlap_flag_has_no_overlap_geometry(self):
+        selected = token("doe-type-2", "DOE -Type 2", "activity")
+        values = [
+            task("First", "2026-09-01", "2026-09-10", [selected]),
+            task("Second", "2026-09-05", "2026-09-12", [selected]),
+        ]
+        hidden = build_identity_story(
+            [{"id": "p", "name": "P", "roots": values}],
+            "doe-type-2", "DOE -Type 2", "activity", flag_overlaps=False)
+        shown = build_identity_story(
+            [{"id": "p", "name": "P", "roots": values}],
+            "doe-type-2", "DOE -Type 2", "activity", flag_overlaps=True)
+        timeline = IdentityTimeline()
+        timeline.resize(900, 420)
+        timeline.set_story(hidden)
+        hidden_geometry = timeline.geometry_snapshot(900)
+        self.assertEqual(2, len(hidden_geometry["bars"]))
+        self.assertEqual([], hidden_geometry["overlaps"])
+        timeline.set_story(shown)
+        shown_geometry = timeline.geometry_snapshot(900)
+        self.assertEqual(1, len(shown_geometry["overlaps"]))
+        self.assertGreater(shown_geometry["overlaps"][0][0].width(), 0)
 
     def test_timeline_uses_unique_breadcrumbs_for_repeated_task_names(self):
         selected = token("case-1", "RLN2MA-1")
@@ -178,6 +203,70 @@ class IdentityStoryUiTests(unittest.TestCase):
         finally:
             reopened.close()
         dialog.close()
+
+    def test_doe_type_2_story_follows_live_overlap_checkbox(self):
+        selected = token("doe-type-2", "DOE -Type 2", "activity")
+        projects = [{"id": "p", "name": "P", "roots": [
+            task("First", "2026-09-01", "2026-09-10", [selected]),
+            task("Second", "2026-09-05", "2026-09-12", [selected]),
+        ]}]
+        dialog = MetadataEditorDialog([{
+            "id": "doe-type-2", "name": "DOE -Type 2", "kind": "activity",
+            "header": "Lab Testing", "duration": 10, "flag_overlaps": False,
+        }], projects=projects)
+        try:
+            dialog._show_story("doe-type-2", "DOE -Type 2", "activity")
+            self.assertEqual([], dialog.story_panel.timeline.story.overlaps)
+            self.assertEqual(
+                [], dialog.story_panel.timeline.geometry_snapshot(900)["overlaps"])
+            self.assertIn("0 overlap(s)", dialog.story_panel.heading.text())
+
+            table = dialog.tables["activity"]
+            table.item(0, 2).setCheckState(Qt.CheckState.Checked)
+            dialog._show_story("doe-type-2", "DOE -Type 2", "activity")
+            self.assertEqual(1, len(dialog.story_panel.timeline.story.overlaps))
+            self.assertEqual(
+                1, len(dialog.story_panel.timeline.geometry_snapshot(900)["overlaps"]))
+            self.assertIn("1 overlap(s)", dialog.story_panel.heading.text())
+        finally:
+            dialog.close()
+
+    def test_main_window_story_hides_overlaps_when_metadata_flag_off(self):
+        with patch.object(MainWindow, "_restore_startup_state", return_value=True):
+            window = MainWindow()
+        selected = token("doe-type-2", "DOE -Type 2", "activity")
+        first = task("First", "2026-09-01", "2026-09-10", [selected])
+        second = task("Second", "2026-09-05", "2026-09-12", [selected])
+        try:
+            window._add_project_from_data("P", {}, [first, second], project_id="P")
+            window._metadata_resource_definitions = lambda: [
+                ResourceDefinition(
+                    "doe-type-2", "activity", "DOE -Type 2",
+                    conflict_enabled=False).to_dict()]
+            self.assertFalse(window._flag_overlaps_for_identity("doe-type-2"))
+            with patch("ui.identity_story_panel.IdentityStoryDialog") as dialog_cls, \
+                    patch("utils.usage_logger.timed_exec"):
+                dialog_cls.return_value.jumpRequested.connect = lambda *args: None
+                window.open_identity_story(
+                    "doe-type-2", "DOE -Type 2", "activity")
+                story = dialog_cls.call_args[0][0]
+                self.assertEqual(2, len(story.events))
+                self.assertEqual([], story.overlaps)
+
+            window._metadata_resource_definitions = lambda: [
+                ResourceDefinition(
+                    "doe-type-2", "activity", "DOE -Type 2",
+                    conflict_enabled=True).to_dict()]
+            self.assertTrue(window._flag_overlaps_for_identity("doe-type-2"))
+            with patch("ui.identity_story_panel.IdentityStoryDialog") as dialog_cls, \
+                    patch("utils.usage_logger.timed_exec"):
+                dialog_cls.return_value.jumpRequested.connect = lambda *args: None
+                window.open_identity_story(
+                    "doe-type-2", "DOE -Type 2", "activity")
+                story = dialog_cls.call_args[0][0]
+                self.assertEqual(1, len(story.overlaps))
+        finally:
+            window.close()
 
     def test_phase_overlap_flag_is_disabled_and_new_options_default_off(self):
         dialog = MetadataEditorDialog([{
