@@ -17,7 +17,7 @@ from utils.identity_story import (
 
 DATE_FMT = "%Y-%m-%d"
 AXIS_MIN_GAP_DAYS = 12
-BAR_DATE_CHAR_PX = 6.2
+BAR_DATE_CHAR_PX = 7.0
 BAR_DATE_GAP_PX = 10
 AFTER_LABEL_PAD = 6
 
@@ -38,7 +38,11 @@ def format_story_date(value, with_year=False):
 
 
 def bar_date_caption(start_date, end_date):
-    return f"{format_story_date(start_date)} → {format_story_date(end_date)}"
+    start_text = format_story_date(start_date)
+    end_text = format_story_date(end_date)
+    if start_text == end_text:
+        return start_text
+    return f"{start_text} → {end_text}"
 
 
 def next_month_start(value):
@@ -82,6 +86,8 @@ def estimate_label_width(text, px_per_char=BAR_DATE_CHAR_PX):
 
 def bar_date_placement(bar_width, start_text, end_text, gap=BAR_DATE_GAP_PX):
     """'split' puts dates under both ends; 'after' puts the range beside the bar."""
+    if start_text == end_text:
+        return "after"
     needed = estimate_label_width(start_text) + estimate_label_width(end_text) + gap
     return "split" if bar_width >= needed else "after"
 
@@ -334,11 +340,19 @@ class IdentityTimeline(QWidget):
 
     def _draw_bar_date_labels(self, painter, snapshot):
         """Start/end dates sit on every scheduled bar so the span is readable."""
-        painter.setFont(QFont(self.font().family(), 7))
-        painter.setPen(QColor("#475467"))
+        font = QFont(self.font().family(), 8)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QColor("#344054"))
         metrics = painter.fontMetrics()
         for info, (rect, _event_value) in zip(
                 snapshot["bar_dates"], snapshot["bars"]):
+            painter.setPen(QPen(QColor("#667085"), 1))
+            painter.drawLine(rect.left(), rect.bottom() + 1,
+                             rect.left(), rect.bottom() + 5)
+            painter.drawLine(rect.right(), rect.bottom() + 1,
+                             rect.right(), rect.bottom() + 5)
+            painter.setPen(QColor("#344054"))
             if info["placement"] == "split":
                 painter.drawText(rect.left(), info["y"], info["start_text"])
                 painter.drawText(rect.right() - metrics.horizontalAdvance(

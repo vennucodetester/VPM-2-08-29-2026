@@ -126,6 +126,8 @@ class IdentityStoryUiTests(unittest.TestCase):
                          bar_date_caption("2026-08-31", "2026-09-18"))
         self.assertEqual("split", bar_date_placement(200, "Aug 31", "Sep 18"))
         self.assertEqual("after", bar_date_placement(20, "Aug 31", "Sep 18"))
+        self.assertEqual("after", bar_date_placement(200, "Sep 1", "Sep 1"))
+        self.assertEqual("Sep 1", bar_date_caption("2026-09-01", "2026-09-01"))
 
     def test_timeline_exposes_start_and_end_dates_for_every_bar(self):
         timeline = IdentityTimeline()
@@ -167,16 +169,21 @@ class IdentityStoryUiTests(unittest.TestCase):
         selected = token("case-1", "RLN2MA-1")
         story = build_identity_story([{
             "id": "p", "name": "P",
-            "roots": [task("One day", "2026-09-01", "2026-09-01", [selected])],
+            "roots": [
+                task("Long span", "2026-07-01", "2026-12-01", [selected]),
+                task("One day", "2026-09-01", "2026-09-01", [selected]),
+            ],
         }], "case-1", "RLN2MA-1", "case")
         timeline = IdentityTimeline()
         timeline.set_story(story)
         geometry = timeline.geometry_snapshot(900)
-        self.assertEqual(1, len(geometry["bar_dates"]))
-        info = geometry["bar_dates"][0]
-        self.assertEqual("Sep 1 → Sep 1", info["caption"])
+        info = next(item for item in geometry["bar_dates"]
+                    if item["start_date"] == item["end_date"])
+        rect = next(rect for rect, event in geometry["bars"]
+                    if event.event_id == info["event_id"])
+        self.assertEqual("Sep 1", info["caption"])
         self.assertIn(info["placement"], {"after", "under"})
-        self.assertLess(geometry["bars"][0][0].width(), 40)
+        self.assertLess(rect.width(), 40)
 
     def test_empty_story_has_clear_message(self):
         timeline = IdentityTimeline()
