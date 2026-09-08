@@ -1,23 +1,23 @@
 # VPM Tracker Usage Report
 
-Events analyzed: 1419 over last 3 month(s)
-Sessions: 4
-Average session: 8929s
-Median session: 8929s
+Events analyzed: 1426 over last 3 month(s)
+Sessions: 6
+Average session: 7325s
+Median session: 4119s
 
 ## Sessions
-Weekdays: Monday: 993, Tuesday: 384, Friday: 42
-Hours: 09:00=114, 11:00=467, 12:00=231, 13:00=341, 14:00=177, 16:00=63, 17:00=26
+Weekdays: Monday: 993, Tuesday: 391, Friday: 42
+Hours: 09:00=114, 11:00=467, 12:00=231, 13:00=341, 14:00=177, 16:00=63, 17:00=26, 18:00=7
 
 ## Feature Leaderboard
-- resource_analysis: 462
+- resource_analysis: 464
 - task_inline_lookup_apply: 228
 - task_inline_lookup: 193
 - dialog: 121
 - task_name_edit: 74
 - file_save: 55
 - menu_action: 42
-- tab_switch: 37
+- tab_switch: 39
 - schedule_edit: 31
 - metadata_lists_save: 19
 - task_add: 18
@@ -29,17 +29,17 @@ Hours: 09:00=114, 11:00=467, 12:00=231, 13:00=341, 14:00=177, 16:00=63, 17:00=26
 - indent: 9
 - undo: 8
 - menu_open: 7
+- file_open: 6
 - date_rule_open: 6
-- file_open: 5
 - date_rule_apply: 5
 - task_row_complete: 5
 - outdent: 5
 - context_menu_action: 5
 - task_note_escape_to_overall: 5
 - notes_pad_open: 5
-- app_start: 3
+- app_start: 4
 - warning_shown: 3
-- app_end: 2
+- app_end: 3
 - resource_conflict_action: 1
 
 Never used: search, zoom, bulk_edit, filter_apply, redo, baseline_set, baseline_update_node, catchup_open, catchup_apply, waiting_set, waiting_clear, note_promoted, excel_export
@@ -57,14 +57,14 @@ Dialogs:
 ## Errors
 
 ## Trend
-- app_end: 2026-08=0, 2026-09=2
-- app_start: 2026-08=1, 2026-09=2
+- app_end: 2026-08=0, 2026-09=3
+- app_start: 2026-08=1, 2026-09=3
 - context_menu_action: 2026-08=2, 2026-09=3
 - date_choice_menu: 2026-08=8, 2026-09=2
 - date_rule_apply: 2026-08=4, 2026-09=1
 - date_rule_open: 2026-08=4, 2026-09=2
 - dialog: 2026-08=82, 2026-09=39
-- file_open: 2026-08=1, 2026-09=4
+- file_open: 2026-08=1, 2026-09=5
 - file_save: 2026-08=31, 2026-09=24
 - indent: 2026-08=8, 2026-09=1
 - menu_action: 2026-08=25, 2026-09=17
@@ -73,11 +73,11 @@ Dialogs:
 - notes_pad_open: 2026-08=0, 2026-09=5
 - outdent: 2026-08=4, 2026-09=1
 - quick_capture: 2026-08=0, 2026-09=12
-- resource_analysis: 2026-08=319, 2026-09=143
+- resource_analysis: 2026-08=319, 2026-09=145
 - resource_conflict_action: 2026-08=0, 2026-09=1
 - schedule_edit: 2026-08=15, 2026-09=16
 - status_edit: 2026-08=2, 2026-09=15
-- tab_switch: 2026-08=6, 2026-09=31
+- tab_switch: 2026-08=6, 2026-09=33
 - task_add: 2026-08=9, 2026-09=9
 - task_delete: 2026-08=6, 2026-09=5
 - task_inline_lookup: 2026-08=177, 2026-09=16
