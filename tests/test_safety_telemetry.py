@@ -8,7 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QTimer
+from PyQt6.QtWidgets import QApplication, QDialog
 
 from models.task_node import TaskNode
 from utils.file_guard import ProjectFileGuard
@@ -16,7 +17,9 @@ from utils.usage_logger import (
     CLOSE_EXPORT_TIMEOUT_SECONDS,
     REPO_TELEMETRY_DIRNAME,
     UsageLogger,
+    dialog_outcome,
     repo_telemetry_dir,
+    timed_exec,
 )
 from utils.usage_report import build_report
 from utils.version_info import install_dir
@@ -265,6 +268,88 @@ class GitignoreTelemetryTests(unittest.TestCase):
             ["git", "-C", repo, "check-ignore", "-q", "telemetry/README.md"],
             capture_output=True, text=True)
         self.assertEqual(1, readme.returncode)
+
+
+class DialogOutcomeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _dialog_rows(self, logger):
+        return [json.loads(line) for line in logger.path().read_text(
+            encoding="utf-8").splitlines() if json.loads(line)["ev"] == "dialog"]
+
+    def test_dialog_outcome_keeps_ok_and_plain_cancel(self):
+        dialog = QDialog()
+        try:
+            self.assertEqual("ok", dialog_outcome(dialog, 1))
+            self.assertEqual("cancel", dialog_outcome(dialog, 0))
+        finally:
+            dialog.close()
+
+    def test_dialog_outcome_maps_intentional_notes_navigation(self):
+        marked = QDialog()
+        flagged = QDialog()
+        try:
+            marked.setProperty("telemetry_outcome", "navigated")
+            self.assertEqual("navigated", dialog_outcome(marked, 0))
+            flagged.setProperty("clear_task_note_context", True)
+            self.assertEqual("navigated", dialog_outcome(flagged, 0))
+        finally:
+            marked.close()
+            flagged.close()
+
+    def test_timed_exec_logs_navigated_for_escape_to_overall(self):
+        """Esc / escape-to-overall must not inflate notes_edit cancel rate."""
+        with tempfile.TemporaryDirectory() as folder:
+            logger = UsageLogger(folder, enabled=True, import_legacy=False)
+            dialog = QDialog()
+            dialog.setProperty("clear_task_note_context", True)
+            dialog.setProperty("telemetry_outcome", "navigated")
+            QTimer.singleShot(0, dialog.reject)
+            with patch("utils.usage_logger.usage", logger):
+                result = timed_exec(dialog, "notes_edit")
+            self.assertFalse(result)
+            rows = self._dialog_rows(logger)
+            self.assertEqual(1, len(rows))
+            self.assertEqual("notes_edit", rows[0]["d"]["name"])
+            self.assertEqual("navigated", rows[0]["d"]["outcome"])
+
+    def test_timed_exec_still_logs_cancel_for_plain_reject(self):
+        with tempfile.TemporaryDirectory() as folder:
+            logger = UsageLogger(folder, enabled=True, import_legacy=False)
+            dialog = QDialog()
+            QTimer.singleShot(0, dialog.reject)
+            with patch("utils.usage_logger.usage", logger):
+                result = timed_exec(dialog, "notes_edit")
+            self.assertFalse(result)
+            rows = self._dialog_rows(logger)
+            self.assertEqual(1, len(rows))
+            self.assertEqual("cancel", rows[0]["d"]["outcome"])
+
+    def test_timed_exec_logs_ok_for_accept(self):
+        with tempfile.TemporaryDirectory() as folder:
+            logger = UsageLogger(folder, enabled=True, import_legacy=False)
+            dialog = QDialog()
+            QTimer.singleShot(0, dialog.accept)
+            with patch("utils.usage_logger.usage", logger):
+                result = timed_exec(dialog, "notes_edit")
+            self.assertTrue(result)
+            rows = self._dialog_rows(logger)
+            self.assertEqual(1, len(rows))
+            self.assertEqual("ok", rows[0]["d"]["outcome"])
+
+    def test_usage_report_does_not_count_navigated_as_cancel(self):
+        with tempfile.TemporaryDirectory() as folder:
+            logger = UsageLogger(folder, enabled=True, import_legacy=False)
+            logger.log("dialog", name="notes_edit", outcome="navigated",
+                       ms_open=1500)
+            logger.log("dialog", name="notes_edit", outcome="cancel",
+                       ms_open=800)
+            logger.log("dialog", name="notes_edit", outcome="ok",
+                       ms_open=96000)
+            report = build_report(months=3, root=logger.root)
+            self.assertIn("notes_edit: 3 shown, 33% cancel", report)
 
 
 class ProjectIdentityTests(unittest.TestCase):

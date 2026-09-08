@@ -5,19 +5,20 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from PyQt6.QtWidgets import (QApplication, QLineEdit, QMessageBox, QPushButton,
-                             QTabWidget)
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QLineEdit,
+                             QMessageBox, QPushButton, QTabWidget)
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QKeyEvent, QKeySequence, QShortcut
 from PyQt6.QtTest import QTest
 
 from models.task_node import TaskNode
 from ui.dialogs import ImpactReviewDialog
 from ui.project_widget import ProjectWidget
-from ui.tree_grid_view import TreeGridView
+from ui.tree_grid_view import NotesEditDialog, TreeGridView
 from ui.inline_task_editor import InlineTaskEditor
 from utils.scheduler import schedule
 from utils.template_catalog import load_templates
+from utils.usage_logger import UsageLogger
 from utils.vpmt_io import load_projects, save_projects
 from utils.config_manager import ConfigManager
 
@@ -252,6 +253,107 @@ class RoadmapFeatureTests(unittest.TestCase):
                 delegate.open_dialog(tree.indexFromItem(item, 9))
             self.assertEqual([], tree.selectedItems())
         finally:
+            tree.close()
+
+    def _open_notes_with(self, closer, original_notes="keep me"):
+        tree = TreeGridView()
+        node = TaskNode("Task")
+        node.notes = original_notes
+        tree.load_project([node])
+        item = tree.topLevelItem(0)
+        item.setSelected(True)
+        delegate = tree.itemDelegateForColumn(9)
+        QTimer.singleShot(0, closer)
+        folder = tempfile.TemporaryDirectory()
+        logger = UsageLogger(folder.name, enabled=True, import_legacy=False)
+        with patch("utils.usage_logger.usage", logger):
+            delegate.open_dialog(tree.indexFromItem(item, 9))
+        rows = [json.loads(line) for line in logger.path().read_text(
+            encoding="utf-8").splitlines()]
+        dialog_rows = [row for row in rows if row["ev"] == "dialog"
+                       and row["d"].get("name") == "notes_edit"]
+        return tree, node, folder, rows, dialog_rows
+
+    def _notes_dialog(self):
+        for widget in QApplication.topLevelWidgets():
+            if (isinstance(widget, QDialog) and widget.isVisible()
+                    and str(widget.windowTitle()).startswith("Notes -")):
+                return widget
+        return None
+
+    def test_notes_edit_dialog_escape_marks_navigated_without_accepting(self):
+        dialog = NotesEditDialog()
+        try:
+            dialog.show()
+            self.app.processEvents()
+            QTest.keyClick(dialog, Qt.Key.Key_Escape)
+            self.app.processEvents()
+            self.assertTrue(dialog.property("clear_task_note_context"))
+            self.assertEqual("navigated", dialog.property("telemetry_outcome"))
+            self.assertEqual(QDialog.DialogCode.Rejected, dialog.result())
+        finally:
+            dialog.close()
+
+    def test_notes_edit_dialog_reject_without_escape_stays_plain_cancel(self):
+        dialog = NotesEditDialog()
+        try:
+            dialog.reject()
+            self.assertFalse(dialog.property("clear_task_note_context"))
+            self.assertFalse(dialog.property("telemetry_outcome"))
+            self.assertEqual(QDialog.DialogCode.Rejected, dialog.result())
+        finally:
+            dialog.close()
+
+    def test_notes_ok_saves_and_logs_ok(self):
+        def accept():
+            dialog = self._notes_dialog()
+            self.assertIsNotNone(dialog)
+            dialog.accept()
+        tree, node, folder, rows, dialog_rows = self._open_notes_with(accept)
+        try:
+            self.assertNotEqual("keep me", node.notes)
+            self.assertEqual(1, len(dialog_rows))
+            self.assertEqual("ok", dialog_rows[0]["d"]["outcome"])
+        finally:
+            folder.cleanup()
+            tree.close()
+
+    def test_notes_cancel_does_not_save_and_logs_cancel(self):
+        def cancel():
+            dialog = self._notes_dialog()
+            self.assertIsNotNone(dialog)
+            buttons = dialog.findChild(QDialogButtonBox)
+            cancel_btn = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+            cancel_btn.click()
+        tree, node, folder, rows, dialog_rows = self._open_notes_with(cancel)
+        try:
+            self.assertEqual("keep me", node.notes)
+            self.assertEqual(1, len(dialog_rows))
+            self.assertEqual("cancel", dialog_rows[0]["d"]["outcome"])
+            self.assertTrue(tree.selectedItems())
+        finally:
+            folder.cleanup()
+            tree.close()
+
+    def test_notes_escape_does_not_save_and_logs_navigated(self):
+        def escape():
+            dialog = self._notes_dialog()
+            self.assertIsNotNone(dialog)
+            for shortcut in dialog.findChildren(QShortcut):
+                if shortcut.key() == QKeySequence(Qt.Key.Key_Escape):
+                    shortcut.activated.emit()
+                    return
+            self.fail("notes Esc shortcut missing")
+        tree, node, folder, rows, dialog_rows = self._open_notes_with(escape)
+        try:
+            self.assertEqual("keep me", node.notes)
+            self.assertEqual(1, len(dialog_rows))
+            self.assertEqual("navigated", dialog_rows[0]["d"]["outcome"])
+            self.assertEqual([], tree.selectedItems())
+            self.assertTrue(any(row["ev"] == "task_note_escape_to_overall"
+                                for row in rows))
+        finally:
+            folder.cleanup()
             tree.close()
 
     def test_inline_lookup_filters_headers_and_options_and_stays_active(self):

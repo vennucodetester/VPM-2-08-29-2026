@@ -1,8 +1,8 @@
 from datetime import datetime, timedelta
 from PyQt6.QtWidgets import (QTreeWidget, QTreeWidgetItem, QHeaderView, 
                             QAbstractItemView, QMenu, QMessageBox, QStyledItemDelegate,
-                            QCalendarWidget, QDateEdit, QStyle, QStyleOptionButton,
-                            QStyleOptionViewItem, QApplication)
+                            QCalendarWidget, QDateEdit, QDialog, QStyle,
+                            QStyleOptionButton, QStyleOptionViewItem, QApplication)
 from PyQt6.QtCore import (Qt, pyqtSignal, QPoint, QDate, QTimer, QRect,
                           QEvent, QItemSelectionModel)
 from PyQt6.QtGui import QAction, QColor, QBrush, QKeySequence
@@ -313,6 +313,16 @@ class WaitingOnDelegate(QStyledItemDelegate):
     def setModelData(self, editor, model, index):
         model.setData(index, editor.currentText(), Qt.ItemDataRole.EditRole)
 
+class NotesEditDialog(QDialog):
+    """Task notes editor. Esc leaves without saving (overall-notes path)."""
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.setProperty("clear_task_note_context", True)
+            self.setProperty("telemetry_outcome", "navigated")
+        super().keyPressEvent(event)
+
+
 class NotesDelegate(QStyledItemDelegate):
     def createEditor(self, parent, option, index):
         # Return None to prevent default editor from opening
@@ -361,7 +371,7 @@ class NotesDelegate(QStyledItemDelegate):
                 edit_text = today_tag + " "
             cursor_pos = len(today_tag)
         
-        dialog = QDialog(tree_view)
+        dialog = NotesEditDialog(tree_view)
         dialog.setWindowTitle(f"Notes - {node.name}")
         dialog.resize(400, 300)
         layout = QVBoxLayout(dialog)
@@ -376,6 +386,7 @@ class NotesDelegate(QStyledItemDelegate):
 
         def escape_to_overall_notes():
             dialog.setProperty("clear_task_note_context", True)
+            dialog.setProperty("telemetry_outcome", "navigated")
             dialog.reject()
 
         escape_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), dialog)
