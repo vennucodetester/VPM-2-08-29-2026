@@ -7,7 +7,8 @@ venv/
 env/
 
 usage_logs/
-usage-*.jsonl
+# Accidental leftover logs at the repo root only. telemetry/ is tracked.
+/usage-*.jsonl
 Save files/
 .git-helper/logs/
 .git-helper/recovery/
