@@ -16,10 +16,80 @@ from utils.identity_story import (
 
 
 DATE_FMT = "%Y-%m-%d"
+AXIS_MIN_GAP_DAYS = 12
+BAR_DATE_CHAR_PX = 7.0
+BAR_DATE_GAP_PX = 10
+AFTER_LABEL_PAD = 6
 
 
 def _date(value):
+    if isinstance(value, date):
+        return value
     return datetime.strptime(value, DATE_FMT).date()
+
+
+def format_story_date(value, with_year=False):
+    """Compact visible date: 'Aug 31' or 'Aug 31, 2026'."""
+    current = _date(value)
+    label = f"{current.strftime('%b')} {current.day}"
+    if with_year:
+        return f"{label}, {current.year}"
+    return label
+
+
+def bar_date_caption(start_date, end_date):
+    start_text = format_story_date(start_date)
+    end_text = format_story_date(end_date)
+    if start_text == end_text:
+        return start_text
+    return f"{start_text} → {end_text}"
+
+
+def next_month_start(value):
+    current = _date(value)
+    if current.month == 12:
+        return date(current.year + 1, 1, 1)
+    return date(current.year, current.month + 1, 1)
+
+
+def story_axis_ticks(first, last, min_gap_days=AXIS_MIN_GAP_DAYS):
+    """Range ends plus month starts, dropping ticks that sit too close."""
+    first, last = _date(first), _date(last)
+    if last < first:
+        first, last = last, first
+    ticks = [first]
+    cursor = next_month_start(first)
+    while cursor < last:
+        if (cursor - ticks[-1]).days >= min_gap_days:
+            ticks.append(cursor)
+        cursor = next_month_start(cursor)
+    if last != first:
+        if (last - ticks[-1]).days >= min_gap_days:
+            ticks.append(last)
+        else:
+            ticks[-1] = last
+    return ticks
+
+
+def format_axis_tick(tick, first, last):
+    current = _date(tick)
+    if current == _date(first) or current == _date(last):
+        return format_story_date(current, with_year=True)
+    if current.day == 1:
+        return current.strftime("%b")
+    return format_story_date(current)
+
+
+def estimate_label_width(text, px_per_char=BAR_DATE_CHAR_PX):
+    return int(round(len(text) * px_per_char))
+
+
+def bar_date_placement(bar_width, start_text, end_text, gap=BAR_DATE_GAP_PX):
+    """'split' puts dates under both ends; 'after' puts the range beside the bar."""
+    if start_text == end_text:
+        return "after"
+    needed = estimate_label_width(start_text) + estimate_label_width(end_text) + gap
+    return "split" if bar_width >= needed else "after"
 
 
 class IdentityTimeline(QWidget):
@@ -28,7 +98,7 @@ class IdentityTimeline(QWidget):
     overlapSelected = pyqtSignal(object)
 
     LEFT = 330
-    RIGHT = 24
+    RIGHT = 110
     TOP = 60
     LANE = 62
     UNSCHEDULED_LANE = 42
@@ -76,6 +146,7 @@ class IdentityTimeline(QWidget):
             return self.LEFT + int((_date(value) - first).days / span * chart_width)
 
         bars = []
+        bar_dates = []
         event_rows = {}
         for index, event in enumerate(self.story.events):
             y = self.TOP + index * self.LANE + 24
@@ -83,7 +154,27 @@ class IdentityTimeline(QWidget):
             x2 = self.LEFT + int(((_date(event.end_date) - first).days + 1)
                                  / span * chart_width)
             rect = QRect(x1, y, max(5, x2 - x1), 18)
+            start_text = format_story_date(event.start_date)
+            end_text = format_story_date(event.end_date)
+            caption = bar_date_caption(event.start_date, event.end_date)
+            placement = bar_date_placement(rect.width(), start_text, end_text)
+            if (placement == "after"
+                    and rect.right() + AFTER_LABEL_PAD
+                    + estimate_label_width(caption) > width - 8):
+                placement = "under"
             bars.append((rect, event))
+            bar_dates.append({
+                "event_id": event.event_id,
+                "start_date": event.start_date,
+                "end_date": event.end_date,
+                "start_text": start_text,
+                "end_text": end_text,
+                "caption": caption,
+                "placement": placement,
+                "start_x": rect.left(),
+                "end_x": rect.right(),
+                "y": rect.bottom() + 11,
+            })
             event_rows[event.event_id] = (rect, event)
         overlaps = []
         for overlap in self.story.overlaps:
@@ -104,7 +195,15 @@ class IdentityTimeline(QWidget):
             unscheduled.append((QRect(
                 18, y + index * self.UNSCHEDULED_LANE,
                 width - 36, self.UNSCHEDULED_LANE - 4), event))
-        return {"range": (first, last), "bars": bars,
+        axis_ticks = []
+        for tick in story_axis_ticks(first, last):
+            axis_ticks.append({
+                "date": tick,
+                "label": format_axis_tick(tick, first, last),
+                "x": x_of(tick),
+            })
+        return {"range": (first, last), "bars": bars, "bar_dates": bar_dates,
+                "axis_ticks": axis_ticks,
                 "overlaps": overlaps, "unscheduled": unscheduled}
 
     def paintEvent(self, event):
@@ -127,10 +226,18 @@ class IdentityTimeline(QWidget):
         painter.setFont(QFont(self.font().family(), 9, QFont.Weight.Bold))
         painter.drawText(12, 24, f"Story: {self.story.identity_label}")
         painter.setFont(QFont(self.font().family(), 8))
-        painter.setPen(QColor("#667085"))
-        painter.drawText(self.LEFT, 26, first.strftime("%b %d, %Y"))
-        painter.drawText(self.width() - 120, 26, 105, 18,
-                         Qt.AlignmentFlag.AlignRight, last.strftime("%b %d, %Y"))
+        chart_bottom = self.TOP + max(1, len(self.story.events)) * self.LANE
+        ticks = snapshot["axis_ticks"]
+        for index, tick in enumerate(ticks):
+            painter.setPen(QPen(QColor("#d0d5dd"), 1))
+            painter.drawLine(tick["x"], 32, tick["x"], chart_bottom)
+            painter.setPen(QColor("#667085"))
+            label = tick["label"]
+            if index == len(ticks) - 1:
+                painter.drawText(tick["x"] - 112, 14, 110, 18,
+                                 Qt.AlignmentFlag.AlignRight, label)
+            else:
+                painter.drawText(tick["x"] + 3, 26, label)
 
         if not self.story.events:
             painter.setPen(QColor("#475467"))
@@ -190,6 +297,7 @@ class IdentityTimeline(QWidget):
                 painter.setPen(QColor("#991b1b"))
                 painter.drawText(band.left() + 3, band.top() - 2,
                                  f"Overlap {overlap.overlap_start}–{overlap.overlap_end}")
+            self._draw_bar_date_labels(painter, snapshot)
 
         today = date.today()
         if first <= today <= last:
@@ -229,6 +337,31 @@ class IdentityTimeline(QWidget):
             painter.drawText(context_rect, Qt.AlignmentFlag.AlignVCenter,
                              context)
         painter.end()
+
+    def _draw_bar_date_labels(self, painter, snapshot):
+        """Start/end dates sit on every scheduled bar so the span is readable."""
+        font = QFont(self.font().family(), 8)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QColor("#344054"))
+        metrics = painter.fontMetrics()
+        for info, (rect, _event_value) in zip(
+                snapshot["bar_dates"], snapshot["bars"]):
+            painter.setPen(QPen(QColor("#667085"), 1))
+            painter.drawLine(rect.left(), rect.bottom() + 1,
+                             rect.left(), rect.bottom() + 5)
+            painter.drawLine(rect.right(), rect.bottom() + 1,
+                             rect.right(), rect.bottom() + 5)
+            painter.setPen(QColor("#344054"))
+            if info["placement"] == "split":
+                painter.drawText(rect.left(), info["y"], info["start_text"])
+                painter.drawText(rect.right() - metrics.horizontalAdvance(
+                    info["end_text"]), info["y"], info["end_text"])
+            elif info["placement"] == "under":
+                painter.drawText(rect.left(), info["y"], info["caption"])
+            else:
+                painter.drawText(rect.right() + AFTER_LABEL_PAD,
+                                 rect.center().y() + 4, info["caption"])
 
     def _event_at(self, point):
         for rect, event_value in self._bar_hits + self._unscheduled_hits:
