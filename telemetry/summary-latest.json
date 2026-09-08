@@ -1,0 +1,33 @@
+{
+  "generated": "2026-09-08T16:38:17",
+  "period_days": 7,
+  "first_event": "2026-09-04 11:02:44",
+  "last_event": "2026-09-08 16:38:17",
+  "sessions": 6,
+  "events": 239,
+  "counts": {
+    "resource_analysis": 98,
+    "schedule_edit": 16,
+    "task_note_open": 15,
+    "dialog": 15,
+    "file_save_automatic": 15,
+    "quick_capture": 12,
+    "tab_switch": 11,
+    "task_inline_lookup_apply": 11,
+    "status_edit": 10,
+    "task_add": 7,
+    "task_name_edit": 7,
+    "task_note_escape_to_overall": 5,
+    "notes_pad_open": 5,
+    "task_delete": 2,
+    "date_choice_menu": 2,
+    "date_rule_open": 2,
+    "menu_action": 1,
+    "file_save_manual": 1,
+    "indent": 1,
+    "date_rule_apply": 1,
+    "task_row_complete": 1,
+    "app_end": 1
+  },
+  "last_gap_days": 0
+}
