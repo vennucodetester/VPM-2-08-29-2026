@@ -83,10 +83,15 @@ class MainWindow(QMainWindow):
         # Repo-local telemetry snapshot: AppData stays canonical. A delayed
         # start recovers a previous crash that skipped closeEvent; the 15-minute
         # timer covers long-lived sessions without touching the 3-minute save path.
+        # Both timers are children of this window and are stopped in closeEvent
+        # so a quit within 2.5s cannot invoke a destroyed QObject.
         self._telemetry_export_timer = QTimer(self)
         self._telemetry_export_timer.timeout.connect(self._sync_repo_telemetry_background)
         self._telemetry_export_timer.start(15 * 60 * 1000)
-        QTimer.singleShot(2500, self._sync_repo_telemetry_background)
+        self._startup_telemetry_timer = QTimer(self)
+        self._startup_telemetry_timer.setSingleShot(True)
+        self._startup_telemetry_timer.timeout.connect(self._sync_repo_telemetry_background)
+        self._startup_telemetry_timer.start(2500)
 
     def _setup_global_shortcuts(self):
         self._notepad_shortcut = QShortcut(QKeySequence("Ctrl+Space"), self)
@@ -949,6 +954,12 @@ class MainWindow(QMainWindow):
 
     def _sync_repo_telemetry_background(self):
         usage_logger.sync_repo_telemetry(background=True)
+
+    def _cancel_repo_telemetry_timers(self):
+        for name in ("_startup_telemetry_timer", "_telemetry_export_timer"):
+            timer = getattr(self, name, None)
+            if timer is not None:
+                timer.stop()
 
     def _export_repo_telemetry(self):
         dest = usage_logger.sync_repo_telemetry(background=False)
@@ -1945,11 +1956,18 @@ class MainWindow(QMainWindow):
         else:
             event.accept()
         if event.isAccepted():
-            usage_logger.log("app_end", secs=usage_logger.usage.session_secs())
-            usage_logger.usage.write_summary()
-            # Sync so the last session is in the repo before the process exits.
-            usage_logger.sync_repo_telemetry(background=False)
-            self.file_guard.release()
+            try:
+                self._cancel_repo_telemetry_timers()
+                usage_logger.log("app_end", secs=usage_logger.usage.session_secs())
+                usage_logger.usage.write_summary()
+                # Bound so a periodic export holding the lock cannot hang quit.
+                usage_logger.sync_repo_telemetry(
+                    background=False,
+                    timeout=usage_logger.CLOSE_EXPORT_TIMEOUT_SECONDS)
+            except Exception:
+                pass
+            finally:
+                self.file_guard.release()
 
     # ---------------- file I/O ----------------
     def save_project_file(self):

@@ -22,9 +22,11 @@ SCHEMA_VERSION = 2
 SESSION_IDLE_SECONDS = 30 * 60
 REPO_TELEMETRY_DIRNAME = "telemetry"
 REPO_EXPORT_MONTHS = 2
+CLOSE_EXPORT_TIMEOUT_SECONDS = 1.0
 SENSITIVE_KEYS = {
     "path", "file", "filename", "task", "task_name", "note", "text",
     "dollar", "dollars", "amount", "value",
+    "token", "password", "secret", "email",
 }
 
 
@@ -424,8 +426,15 @@ class UsageLogger:
         except OSError:
             return None
 
-    def sync_repo_telemetry(self, dest=None, background=False, include_report=True):
-        """Export to the repo folder, optionally on a daemon thread."""
+    def sync_repo_telemetry(self, dest=None, background=False, include_report=True,
+                            timeout=None):
+        """Export to the repo folder, optionally on a daemon thread.
+
+        ``timeout`` bounds a foreground call so quit cannot hang: if the
+        15-minute export already holds ``_export_lock``, return immediately;
+        otherwise wait at most ``timeout`` seconds for the copy to finish.
+        ``timeout is None`` waits for the lock and the copy (manual export).
+        """
         if not self.enabled:
             return None
         dest_root = repo_telemetry_dir(dest)
@@ -441,8 +450,32 @@ class UsageLogger:
             self._export_thread = thread
             thread.start()
             return dest_root
+        if timeout is not None:
+            return self._sync_repo_telemetry_bounded(
+                dest, include_report, max(0.0, float(timeout)))
         with self._export_lock:
             return self.export_repo_telemetry(dest=dest, include_report=include_report)
+
+    def _sync_repo_telemetry_bounded(self, dest, include_report, timeout):
+        """Skip if a periodic export holds the lock; otherwise join with timeout."""
+        if self._export_lock.locked():
+            return None
+        box = []
+
+        def work():
+            try:
+                with self._export_lock:
+                    box.append(self.export_repo_telemetry(
+                        dest=dest, include_report=include_report))
+            except Exception:
+                pass
+
+        thread = threading.Thread(
+            target=work, daemon=True, name="telemetry-repo-export-close")
+        self._export_thread = thread
+        thread.start()
+        thread.join(timeout)
+        return box[0] if box else None
 
     def _export_repo_telemetry_safe(self, dest, include_report):
         try:
@@ -471,9 +504,11 @@ def is_enabled() -> bool:
     return bool(usage.enabled)
 
 
-def sync_repo_telemetry(dest=None, background=False, include_report=True):
+def sync_repo_telemetry(dest=None, background=False, include_report=True,
+                        timeout=None):
     return usage.sync_repo_telemetry(
-        dest=dest, background=background, include_report=include_report)
+        dest=dest, background=background, include_report=include_report,
+        timeout=timeout)
 
 
 def timed_exec(dialog, name: str):

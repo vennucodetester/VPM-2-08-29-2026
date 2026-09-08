@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +13,7 @@ from PyQt6.QtWidgets import QApplication
 from models.task_node import TaskNode
 from utils.file_guard import ProjectFileGuard
 from utils.usage_logger import (
+    CLOSE_EXPORT_TIMEOUT_SECONDS,
     REPO_TELEMETRY_DIRNAME,
     UsageLogger,
     repo_telemetry_dir,
@@ -68,6 +70,19 @@ class TelemetryTests(unittest.TestCase):
             self.assertEqual({".vpmt"}, {row["d"]["file_type"] for row in rows})
             self.assertNotIn("Secret Project", json.dumps(rows))
             self.assertEqual({"proj-safe"}, {row["project"] for row in rows})
+
+    def test_events_strip_token_password_secret_and_email(self):
+        with tempfile.TemporaryDirectory() as folder:
+            logger = UsageLogger(folder, enabled=True, import_legacy=False)
+            logger.log("auth", token="abc", password="p", secret="s",
+                       email="a@b.c", via="menu")
+            row = json.loads(logger.path().read_text(encoding="utf-8").splitlines()[0])
+            self.assertEqual("menu", row["d"]["via"])
+            for key in ("token", "password", "secret", "email"):
+                self.assertNotIn(key, row["d"])
+            dumped = json.dumps(row)
+            self.assertNotIn("abc", dumped)
+            self.assertNotIn("a@b.c", dumped)
 
     def test_summary_is_written(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -187,6 +202,33 @@ class TelemetryTests(unittest.TestCase):
             self.assertEqual(before, after)
             self.assertEqual(REPO_TELEMETRY_DIRNAME, default.name)
 
+    def test_bounded_export_skips_when_lock_already_held(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = os.path.join(folder, "appdata")
+            dest = os.path.join(folder, "repo-telemetry")
+            logger = UsageLogger(source, enabled=True, import_legacy=False)
+            logger.log("app_start")
+            self.assertTrue(logger._export_lock.acquire(blocking=False))
+            try:
+                start = time.time()
+                result = logger.sync_repo_telemetry(dest=dest, timeout=1.0)
+                elapsed = time.time() - start
+                self.assertIsNone(result)
+                self.assertLess(elapsed, 0.4)
+                self.assertFalse(os.path.exists(dest))
+            finally:
+                logger._export_lock.release()
+
+    def test_bounded_export_writes_when_lock_is_free(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = os.path.join(folder, "appdata")
+            dest = os.path.join(folder, "repo-telemetry")
+            logger = UsageLogger(source, enabled=True, import_legacy=False)
+            logger.log("app_start")
+            result = logger.sync_repo_telemetry(dest=dest, timeout=1.0)
+            self.assertEqual(Path(dest), result)
+            self.assertTrue((Path(dest) / logger.path().name).is_file())
+
     def test_background_export_writes_without_raising(self):
         with tempfile.TemporaryDirectory() as folder:
             source = os.path.join(folder, "appdata")
@@ -277,9 +319,32 @@ class MainWindowSafetyTests(unittest.TestCase):
                 sync.assert_called()
                 kwargs = sync.call_args.kwargs
                 self.assertFalse(kwargs.get("background", True))
+                self.assertEqual(
+                    CLOSE_EXPORT_TIMEOUT_SECONDS, kwargs.get("timeout"))
         finally:
             if window.isVisible():
                 window.close()
+
+    def test_close_event_releases_file_guard_if_export_raises(self):
+        window = self._window()
+        window.unsaved_changes = False
+        release = window.file_guard.release
+        with patch.object(window.file_guard, "release", wraps=release) as mocked:
+            with patch("ui.main_window.usage_logger.sync_repo_telemetry",
+                       side_effect=RuntimeError("export failed")):
+                window.close()
+            mocked.assert_called()
+
+    def test_startup_telemetry_timer_is_child_and_stopped_on_close(self):
+        window = self._window()
+        window.unsaved_changes = False
+        self.assertIs(window._startup_telemetry_timer.parent(), window)
+        self.assertTrue(window._startup_telemetry_timer.isSingleShot())
+        self.assertTrue(window._startup_telemetry_timer.isActive())
+        with patch("ui.main_window.usage_logger.sync_repo_telemetry"):
+            window.close()
+        self.assertFalse(window._startup_telemetry_timer.isActive())
+        self.assertFalse(window._telemetry_export_timer.isActive())
 
     def test_second_window_cannot_open_locked_project(self):
         with tempfile.TemporaryDirectory() as folder:
