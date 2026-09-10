@@ -137,7 +137,7 @@ class DateRuleUiTests(unittest.TestCase):
             tree.load_project([node])
             menu = tree._date_choice_menu(tree.topLevelItem(0), "end")
             labels = [action.text() for action in menu.actions()]
-            self.assertTrue(any("Calendar" in label for label in labels))
+            self.assertTrue(any("fixed" in label.lower() for label in labels))
             self.assertTrue(any("Same As" in label for label in labels))
             self.assertTrue(any("Continue After" in label for label in labels))
             self.assertTrue(any("Automatic" in label for label in labels))

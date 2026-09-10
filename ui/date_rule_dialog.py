@@ -36,7 +36,7 @@ class DateRuleDialog(ContextPickerDialog):
             button = QPushButton(labels[mode])
             button.setCheckable(True)
             button.setToolTip({
-                "fixed": "Choose a fixed calendar date",
+                "fixed": "Pin this field to a fixed date (the cell dropdown changes dates without pinning)",
                 "same_as": "Match another task date exactly; shortcut =",
                 "continue_after": "Start after another task; shortcut +",
                 "automatic": "Let the scheduler control this field",

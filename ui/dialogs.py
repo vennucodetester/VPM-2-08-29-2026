@@ -231,8 +231,8 @@ class ImpactReviewDialog(QDialog):
         self.review = review or {}
         self.result_action = None  # "update_all" | "keep_others" | None
 
-        self.setWindowTitle("Date change — impact review")
-        self.resize(620, 430)
+        self.setWindowTitle("Schedule impact")
+        self.resize(520, 320)
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
 
@@ -271,38 +271,43 @@ class ImpactReviewDialog(QDialog):
                 "border-radius:8px; padding:12px; font-size:15px;")
         layout.addWidget(banner)
 
-        # ---- rundown of every task that shifts ----
+        # Only the tasks that actually drive the project finish. Listing
+        # every downstream ripple was the "rubbish" the user asked to drop.
         impacts = self.review.get('impacts', []) or []
-        if impacts:
+        drivers = [imp for imp in impacts if imp.get('on_chain')]
+        other_count = len(impacts) - len(drivers)
+        if drivers:
+            note = f"{len(drivers)} task(s) drive the project end date"
+            if other_count:
+                note += f" ({other_count} other shift(s) omitted)"
             layout.addWidget(self._rich(
-                f"<span style='color:#555;'>{len(impacts)} other task(s) "
-                f"shift because of this change:</span>"))
-            table = QTableWidget(len(impacts), 4)
+                f"<span style='color:#555;'>{note}:</span>"))
+            table = QTableWidget(len(drivers), 3)
             table.setHorizontalHeaderLabels(
-                ["Task", "Current end", "New end", "Drives end date"])
+                ["Task", "Current end", "New end"])
             hdr = table.horizontalHeader()
             hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
             hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
             hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-            hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
             table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
             table.verticalHeader().setVisible(False)
             table.setAlternatingRowColors(True)
-            for r, imp in enumerate(impacts):
+            for r, imp in enumerate(drivers):
                 cells = [
                     QTableWidgetItem(str(imp.get('name', ''))),
                     QTableWidgetItem(str(imp.get('old_end', ''))),
                     QTableWidgetItem(str(imp.get('new_end', ''))),
-                    QTableWidgetItem("⚠ yes" if imp.get('on_chain') else "—"),
                 ]
                 for c, cell in enumerate(cells):
                     align = (Qt.AlignmentFlag.AlignLeft if c == 0
                              else Qt.AlignmentFlag.AlignCenter)
                     cell.setTextAlignment(align | Qt.AlignmentFlag.AlignVCenter)
                     table.setItem(r, c, cell)
-                if imp.get('on_chain'):
-                    table.item(r, 3).setForeground(QBrush(QColor("#FF9800")))
             layout.addWidget(table, 1)
+        elif impacts:
+            layout.addWidget(self._rich(
+                f"<span style='color:#888;'>{len(impacts)} other task(s) "
+                f"shift; none of them drive the project end.</span>"))
         else:
             layout.addWidget(self._rich(
                 "<span style='color:#888;'>No other tasks are affected.</span>"))
