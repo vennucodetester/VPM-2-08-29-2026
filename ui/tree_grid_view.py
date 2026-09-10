@@ -4,12 +4,12 @@ from PyQt6.QtWidgets import (QTreeWidget, QTreeWidgetItem, QHeaderView,
                             QCalendarWidget, QDateEdit, QDialog, QStyle,
                             QStyleOptionButton, QStyleOptionViewItem, QApplication)
 from PyQt6.QtCore import (Qt, pyqtSignal, QPoint, QDate, QTimer, QRect,
-                          QEvent, QItemSelectionModel)
+                          QEvent, QItemSelectionModel, QObject)
 from PyQt6.QtGui import QAction, QColor, QBrush, QKeySequence
 
 from vpm_tracker_core import Columns, Colors, AppConstants, Status
 from models.task_node import TaskNode
-from ui.dialogs import BulkEditDialog, BulkPasteDialog, ImpactReviewDialog, LinkTaskDialog
+from ui.dialogs import BulkEditDialog, BulkPasteDialog, LinkTaskDialog
 from ui.date_rule_dialog import DateRuleDialog
 from ui.inline_task_editor import InlineTaskEditor
 from ui.header_filter import FilterHeaderView
@@ -34,6 +34,11 @@ def model_date(value: str) -> str:
     text = (value or "").strip()
     if not text:
         return ""
+    # Display cells append 📌 / = / + after the date; strip those so a
+    # calendar commit never fails to parse and silently drop the edit.
+    for marker in ("📌", "=", "+"):
+        if text.endswith(marker):
+            text = text[: -len(marker)].strip()
     for fmt in ("%Y-%m-%d", "%m-%d-%y", "%m/%d/%y", "%m-%d-%Y", "%m/%d/%Y"):
         try:
             return datetime.strptime(text, fmt).strftime("%Y-%m-%d")
@@ -57,11 +62,40 @@ def parse_money(value):
         return None
     return float(text.replace("$", "").replace(",", ""))
 
+class _CalendarDismissFilter(QObject):
+    """Watch the QDateEdit calendar: pick vs. click-outside dismiss."""
+
+    def __init__(self, editor, on_dismiss, parent=None):
+        super().__init__(parent)
+        self.editor = editor
+        self.on_dismiss = on_dismiss
+        self.shown = False
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Show:
+            self.shown = True
+        elif (event.type() == QEvent.Type.Hide and self.shown
+              and not self.editor.property("vpm_date_picked")):
+            self.editor.setProperty("vpm_open_rules", True)
+            QTimer.singleShot(0, self.on_dismiss)
+        return False
+
+
 class DateDelegate(QStyledItemDelegate):
+    """Dropdown-first date entry.
+
+    Double-click opens the old QDateEdit calendar. Picking a day commits
+    that date. Dismissing the calendar (click outside) asks the tree to
+    open the = / + rule box instead of forcing a fixed-date dialog.
+    """
+
     def createEditor(self, parent, option, index):
         editor = QDateEdit(parent)
         editor.setCalendarPopup(True)
         editor.setDisplayFormat("MM-dd-yy")
+        editor.setProperty("vpm_date_picked", False)
+        editor.setProperty("vpm_open_rules", False)
+        editor.setProperty("vpm_original_date", "")
 
         # Explicitly highlight today in the calendar popup. Qt's default
         # outline can get swallowed by dark-theme stylesheets, so we set a
@@ -75,6 +109,16 @@ class DateDelegate(QStyledItemDelegate):
             fmt.setBackground(QColor(255, 213, 79, 60))  # subtle amber tint
             cal.setDateTextFormat(QDate.currentDate(), fmt)
 
+            def mark_picked(_date=None):
+                editor.setProperty("vpm_date_picked", True)
+
+            cal.clicked.connect(mark_picked)
+            cal.activated.connect(mark_picked)
+            watcher = _CalendarDismissFilter(
+                editor, lambda: self._dismiss_to_rules(editor), editor)
+            cal.installEventFilter(watcher)
+            editor._vpm_cal_filter = watcher
+
         # Auto-open calendar popup
         def open_popup():
             from PyQt6.QtWidgets import QToolButton
@@ -86,20 +130,43 @@ class DateDelegate(QStyledItemDelegate):
         QTimer.singleShot(100, open_popup)
         return editor
 
+    def _dismiss_to_rules(self, editor):
+        """Close the dropdown without committing so the rule box can open."""
+        try:
+            if editor.property("vpm_date_picked"):
+                return
+        except RuntimeError:
+            return
+        try:
+            self.closeEditor.emit(editor, QStyledItemDelegate.EndEditHint.RevertModelCache)
+        except RuntimeError:
+            pass
+
     def setEditorData(self, editor, index):
         date_str = index.model().data(index, Qt.ItemDataRole.EditRole)
         if date_str:
             try:
                 dt = datetime.strptime(model_date(date_str), "%Y-%m-%d")
                 editor.setDate(QDate(dt.year, dt.month, dt.day))
+                editor.setProperty("vpm_original_date", dt.strftime("%Y-%m-%d"))
             except ValueError:
                 editor.setDate(QDate.currentDate())
+                editor.setProperty("vpm_original_date",
+                                   QDate.currentDate().toString("yyyy-MM-dd"))
         else:
             editor.setDate(QDate.currentDate())
+            editor.setProperty("vpm_original_date", "")
 
     def setModelData(self, editor, model, index):
-        date = editor.date()
-        model.setData(index, date.toString("yyyy-MM-dd"), Qt.ItemDataRole.EditRole)
+        if editor.property("vpm_open_rules"):
+            return
+        date = editor.date().toString("yyyy-MM-dd")
+        original = editor.property("vpm_original_date") or ""
+        if (not editor.property("vpm_date_picked") and original
+                and date == original):
+            return
+        model.setData(index, date, Qt.ItemDataRole.EditRole)
+        model.setData(index, date, Qt.ItemDataRole.DisplayRole)
 
 class StatusDelegate(QStyledItemDelegate):
     def createEditor(self, parent, option, index):
@@ -749,11 +816,15 @@ class TaskTreeWidgetItem(QTreeWidgetItem):
                     f"Automatic: {self.node.parent.name} · Start")
         return self._with_schedule_explanation(self.node.rule_explanation(field))
 
+    def _schedule_edit_hint(self):
+        return "Pick a date in the calendar. Click outside for = / + rules."
+
     def _with_schedule_explanation(self, base):
         extra = []
         if self.node.schedule_reason:
             extra.append(self.node.schedule_reason)
         extra.extend(f"CONFLICT: {text}" for text in self.node.schedule_conflicts)
+        extra.append(self._schedule_edit_hint())
         return "\n".join([base] + extra)
 
     def _waiting_display(self) -> str:
@@ -1008,9 +1079,11 @@ class TreeGridView(QTreeWidget):
                 self.editItem(current, Columns.TREE)
                 return
             if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                if column in (Columns.START, Columns.END, Columns.PREDECESSOR):
-                    field = "start" if column in (Columns.START, Columns.PREDECESSOR) else "end"
-                    self.open_date_choices(current, field)
+                if column in (Columns.START, Columns.END):
+                    super().editItem(current, column)
+                    return
+                if column == Columns.PREDECESSOR:
+                    self.open_date_choices(current, "start")
                     return
                 self.add_sibling_below(current)
                 return
@@ -1337,17 +1410,15 @@ class TreeGridView(QTreeWidget):
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event):
-        """Double-click on the Depends On column jumps to the predecessor
-        (explicit link or the implicit '↑ prev sibling') instead of opening
-        an editor. Every other column behaves normally.
+        """Start/End open the calendar dropdown. Depends On still opens
+        the = / + rule choices. Every other column behaves normally.
         """
         item = self.itemAt(event.position().toPoint())
         if isinstance(item, TaskTreeWidgetItem):
             col = self.columnAt(int(event.position().x()))
-            if col in (Columns.START, Columns.END, Columns.PREDECESSOR):
-                field = "start" if col in (Columns.START, Columns.PREDECESSOR) else "end"
+            if col == Columns.PREDECESSOR:
                 self.open_date_choices(
-                    item, field, self.viewport().mapToGlobal(
+                    item, "start", self.viewport().mapToGlobal(
                         self.visualItemRect(item).bottomLeft()))
                 return
         super().mouseDoubleClickEvent(event)
@@ -1608,6 +1679,10 @@ class TreeGridView(QTreeWidget):
             set_delay_action.setEnabled(item.node.baseline_duration is not None and not item.node.children)
             set_delay_action.triggered.connect(lambda: self.record_real_delay(item.node))
             dates_menu.addAction(set_delay_action)
+            document_action = QAction("Document this schedule change…", self)
+            document_action.triggered.connect(
+                lambda: self.document_schedule_change(item.node))
+            dates_menu.addAction(document_action)
 
             menu.addSeparator()
 
@@ -1778,8 +1853,9 @@ class TreeGridView(QTreeWidget):
 
         project_delta = (_cal_delta(project_end_old, project_end_new)
                          if project_end_old and project_end_new else 0)
-        # Routine edits apply immediately. Review is reserved for a real
-        # downstream shift or a changed project finish.
+        # Used by resource-move preview. Everyday date/duration edits no
+        # longer open this dialog — they apply immediately and journal
+        # the edited task only.
         if not impacts and project_delta == 0:
             return None
         return {
@@ -1799,9 +1875,8 @@ class TreeGridView(QTreeWidget):
             super().editItem(item, column)
             return
 
-        if column in (Columns.START, Columns.END, Columns.PREDECESSOR):
-            field = "start" if column in (Columns.START, Columns.PREDECESSOR) else "end"
-            self.open_date_choices(item, field)
+        if column == Columns.PREDECESSOR:
+            self.open_date_choices(item, "start")
             return
 
         # Delay column is read-only (auto-calculated from baseline)
@@ -1809,6 +1884,17 @@ class TreeGridView(QTreeWidget):
             return
 
         super().editItem(item, column)
+
+    def closeEditor(self, editor, hint):
+        """Click-outside on the date dropdown opens the = / + rule box."""
+        open_rules = bool(editor.property("vpm_open_rules"))
+        item = self.currentItem()
+        column = self.currentColumn()
+        super().closeEditor(editor, hint)
+        if (open_rules and isinstance(item, TaskTreeWidgetItem)
+                and column in (Columns.START, Columns.END)):
+            field = "start" if column == Columns.START else "end"
+            QTimer.singleShot(0, lambda: self.open_date_rule_dialog(item, field))
 
     def _rule_creates_cycle(self, node: TaskNode, rule: dict) -> bool:
         target_id = rule.get("task_id")
@@ -1881,7 +1967,7 @@ class TreeGridView(QTreeWidget):
 
     def _date_choice_menu(self, item, field):
         menu = QMenu(self)
-        fixed = menu.addAction("Calendar / Fixed Date...")
+        fixed = menu.addAction("Pin as fixed date...")
         same = menu.addAction("Same As (=) — click a task row")
         after = menu.addAction("Continue After (+) — click a task row")
         after.setEnabled(field == "start")
@@ -1916,6 +2002,225 @@ class TreeGridView(QTreeWidget):
         if selected is None:
             usage_logger.log("date_choice_menu", field=field, outcome="canceled")
 
+    def _project_finish(self):
+        ends = [n.end_date for n in self.get_all_nodes_flat() if n.end_date]
+        return max(ends) if ends else None
+
+    def _record_schedule_change(self, node, old_start, old_end, *,
+                                field, via, extra_lines=None):
+        """Quiet, reliable record of an intentional date edit.
+
+        Always journals the edited task's own old → new dates when they
+        actually moved. Downstream ripple is not listed (that was the
+        noise). A single extra line is added when the project finish
+        date itself moved.
+        """
+        lines = list(extra_lines or [])
+        if old_start != node.start_date:
+            lines.append(
+                f"'{node.name}': start {old_start or '—'} → {node.start_date or '—'}")
+        if old_end != node.end_date:
+            lines.append(
+                f"'{node.name}': end {old_end or '—'} → {node.end_date or '—'}")
+        moved = old_start != node.start_date or old_end != node.end_date
+        if moved:
+            usage_logger.log("schedule_edit", field=field, outcome="applied",
+                             via=via)
+        for line in lines:
+            self.journal_event.emit(line)
+        return moved
+
+    def _natural_start_for_rule(self, node: TaskNode):
+        """Date this start rule would produce with offset 0."""
+        rule = node.start_rule
+        mode = rule.get("mode")
+        node_map = self._get_node_map()
+        if mode == "same_as":
+            target = node_map.get(rule.get("task_id"))
+            if target is None:
+                return None
+            return target.start_date if rule.get("field") == "start" else target.end_date
+        if mode == "continue_after":
+            target = node_map.get(rule.get("task_id"))
+            if target is None:
+                return None
+            related = target.start_date if rule.get("field") == "start" else target.end_date
+            return WorkdayCalculator.get_next_workday(related) if related else None
+        return self._natural_automatic_start(node)
+
+    def _natural_automatic_start(self, node: TaskNode):
+        if node.parent:
+            siblings = node.parent.children
+            try:
+                index = siblings.index(node)
+            except ValueError:
+                index = -1
+            if node.is_parallel and node.parent.start_date:
+                return node.parent.start_date
+            if index == 0:
+                return node.parent.start_date
+            if index > 0 and siblings[index - 1].end_date:
+                return WorkdayCalculator.get_next_workday(siblings[index - 1].end_date)
+            return None
+        if self.root_nodes and node is self.root_nodes[0]:
+            return None
+        return None
+
+    def _encode_automatic_start_offset(self, node: TaskNode, desired: str,
+                                       natural: str):
+        """Keep a slipped automatic start rule-driven (not 📌 fixed)."""
+        offset = max(0, WorkdayCalculator.calculate_duration(natural, desired) - 1)
+        if node.parent:
+            siblings = node.parent.children
+            try:
+                index = siblings.index(node)
+            except ValueError:
+                index = -1
+            if node.is_parallel or index == 0:
+                node.set_start_rule({
+                    "mode": "same_as", "task_id": node.parent.id,
+                    "field": "start", "offset": offset,
+                    "offset_unit": "workdays",
+                })
+                return
+            if index > 0:
+                node.set_start_rule({
+                    "mode": "continue_after",
+                    "task_id": siblings[index - 1].id,
+                    "field": "end", "offset": offset,
+                    "offset_unit": "workdays",
+                })
+                return
+        node.start_date = desired
+
+    def _preserve_duration_after_start(self, node: TaskNode, days):
+        if not days or not node.start_date:
+            return
+        node.end_date = WorkdayCalculator.add_workdays(node.start_date, days)
+        if node.end_rule.get("mode") in {"duration", "automatic", None}:
+            node.set_end_rule({"mode": "duration", "days": days})
+
+    def apply_picked_date(self, node: TaskNode, field: str, date_str: str):
+        """Apply a calendar/typed date without forcing automatic fields to fixed.
+
+        End picks update duration (same as typing Duration). Start picks
+        keep the existing relationship when the date can be expressed as
+        an offset; only an earlier date that cannot stay rule-driven is
+        pinned so the edit is not silently dropped.
+        """
+        date_str = model_date(date_str)
+        if not date_str:
+            return
+        if field == "end":
+            mode = (node.end_rule or {}).get("mode")
+            if mode == "fixed":
+                node.set_end_rule({"mode": "fixed", "date": date_str})
+                node.set_date("end", date_str, force=True)
+            elif node.start_date:
+                days = WorkdayCalculator.calculate_duration(node.start_date, date_str)
+                node.set_duration(max(1, days or 1))
+            else:
+                node.set_date("end", date_str, force=True)
+                node.set_end_rule({"mode": "duration",
+                                   "days": max(1, int(node.duration or 1))})
+            return
+
+        days = None
+        if node.start_date and node.end_date:
+            days = WorkdayCalculator.calculate_duration(node.start_date, node.end_date)
+        mode = (node.start_rule or {}).get("mode")
+        if mode == "fixed":
+            node.set_start_rule({"mode": "fixed", "date": date_str})
+            node.start_date = date_str
+        elif mode in {"same_as", "continue_after"}:
+            natural = self._natural_start_for_rule(node)
+            if natural and date_str >= natural:
+                offset = max(0, WorkdayCalculator.calculate_duration(
+                    natural, date_str) - 1)
+                rule = dict(node.start_rule)
+                rule["offset"] = offset
+                node.set_start_rule(rule)
+                node.start_date = date_str
+            elif natural and date_str < natural:
+                node.set_start_rule({"mode": "fixed", "date": date_str})
+                node.start_date = date_str
+            else:
+                node.start_date = date_str
+        else:
+            natural = self._natural_automatic_start(node)
+            if natural is None:
+                node.start_date = date_str
+            elif date_str >= natural:
+                self._encode_automatic_start_offset(node, date_str, natural)
+                node.start_date = date_str
+            else:
+                node.set_start_rule({"mode": "fixed", "date": date_str})
+                node.start_date = date_str
+        self._preserve_duration_after_start(node, days)
+        node.update_status_from_dates()
+
+    def commit_picked_date(self, node: TaskNode, field: str, date_str: str,
+                           *, via="calendar"):
+        """Apply a picked date, refresh, and record the intentional edit."""
+        old_start, old_end = node.start_date, node.end_date
+        project_before = self._project_finish()
+        if getattr(node, "baseline_provisional", False):
+            self.apply_picked_date(node, field, date_str)
+            self.recalculate_all_dates()
+            self.refresh_entire_tree()
+            self._restamp_provisional_baseline(node)
+            self._record_schedule_change(
+                node, old_start, old_end, field=field, via=via)
+            self.item_changed_signal.emit(node)
+            return True
+        self.apply_picked_date(node, field, date_str)
+        item = self._find_item_by_id(node.id)
+        if item is not None and field == "end":
+            self.validate_child_dates(item)
+        self.recalculate_all_dates()
+        self.refresh_entire_tree()
+        extra = []
+        project_after = self._project_finish()
+        if project_before and project_after and project_before != project_after:
+            extra.append(
+                f"Project end {project_before} → {project_after} "
+                f"(from '{node.name}')")
+        self._record_schedule_change(
+            node, old_start, old_end, field=field, via=via, extra_lines=extra)
+        self.item_changed_signal.emit(node)
+        return True
+
+    def document_schedule_change(self, node: TaskNode):
+        """Optional note on a meaningful date change — never auto-popped."""
+        from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout,
+                                     QLineEdit, QDialogButtonBox, QLabel)
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Document schedule change — {node.name}")
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        form.addRow("Start:", QLabel(node.start_date or "—"))
+        form.addRow("End:", QLabel(node.end_date or "—"))
+        reason = QLineEdit()
+        reason.setPlaceholderText("Why this date moved (optional)")
+        form.addRow("Note:", reason)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addLayout(buttons)
+        reason.setFocus()
+        if not usage_logger.timed_exec(dialog, "schedule_document"):
+            return
+        note = reason.text().strip()
+        line = (f"Documented schedule — '{node.name}' "
+                f"{node.start_date or '—'} → {node.end_date or '—'}")
+        if note:
+            line += f": {note}"
+        self.journal_event.emit(line)
+        usage_logger.log("schedule_document", outcome="applied")
+        self.item_changed_signal.emit(node)
+
     def _apply_date_rule(self, item, field, rule):
         if not isinstance(item, TaskTreeWidgetItem):
             return False
@@ -1941,6 +2246,8 @@ class TreeGridView(QTreeWidget):
                 usage_logger.log("date_rule_apply", field=field,
                                  mode=new_mode, outcome="conflict_canceled")
                 return False
+        old_start, old_end = node.start_date, node.end_date
+        project_before = self._project_finish()
         if field == "start":
             node.set_start_rule(rule)
             node.is_parallel = bool(
@@ -1961,8 +2268,20 @@ class TreeGridView(QTreeWidget):
             self._restamp_provisional_baseline(node)
         usage_logger.log("date_rule_apply", field=field, mode=rule.get("mode"),
                          replaced=old_rule.get("mode"))
-        self.journal_event.emit(
-            f"'{node.name}': {field} rule → {node.rule_explanation(field)}")
+        extra = []
+        if (old_rule.get("mode") != rule.get("mode")
+                and old_start == node.start_date
+                and old_end == node.end_date):
+            extra.append(
+                f"'{node.name}': {field} rule → {node.rule_explanation(field)}")
+        project_after = self._project_finish()
+        if project_before and project_after and project_before != project_after:
+            extra.append(
+                f"Project end {project_before} → {project_after} "
+                f"(from '{node.name}')")
+        self._record_schedule_change(
+            node, old_start, old_end, field=field, via="date_rule",
+            extra_lines=extra)
         self.item_changed_signal.emit(node)
         return True
 
@@ -2792,115 +3111,22 @@ class TreeGridView(QTreeWidget):
                 if name_changed:
                     self.refresh_entire_tree()
             elif column == Columns.START:
-                # Smart Date Change Logic
-                if self.is_updating: return
-                text = model_date(text)
-
-                # Block manual start edits whenever the scheduler owns the
-                # start. Only the first root task and any is_parallel=ON task
-                # are manually editable. See _start_is_auto for the rules.
-                if self._start_is_auto(node):
-                    if node.predecessor_id:
-                        msg = ("This task has a predecessor link. Remove the "
-                               "predecessor first before editing its Start "
-                               "date manually.")
-                    else:
-                        msg = ("This task's start date is auto-scheduled.\n\n"
-                               "To type a date manually, right-click the task "
-                               "and choose 'Set Manual Date'.")
-                    QMessageBox.warning(self, "Start date is automatic", msg)
-                    usage_logger.log("warning_shown", name="start_is_auto")
-                    item.setText(Columns.START, node.start_date or "")
-                    item.setData(Columns.START, Qt.ItemDataRole.DisplayRole, display_date(node.start_date or ""))
-                    item.setData(Columns.START, Qt.ItemDataRole.EditRole, node.start_date or "")
-                    self.blockSignals(False)
+                edit_value = item.data(Columns.START, Qt.ItemDataRole.EditRole)
+                text = model_date(edit_value or text)
+                self.blockSignals(False)
+                if self.is_updating:
                     return
-                
-                # 1. Simulate the impact non-destructively (the REAL scheduler
-                #    on a clone) so the popup can show the true project-end
-                #    effect — including predecessor-link ripple.
-                review = self._simulate_impact(node, new_start=text)
+                self.commit_picked_date(node, "start", text, via="dropdown")
+                self.update_filter_options()
+                return
 
-                if review is None:
-                    # Date didn't actually move → apply directly, no popup.
-                    old_start = node.start_date
-                    old_end = node.end_date
-                    if old_start and old_end and text != old_start:
-                        dur = WorkdayCalculator.calculate_duration(old_start, old_end)
-                        node.start_date = text
-                        node.end_date = WorkdayCalculator.add_workdays(text, dur)
-                    else:
-                        node.start_date = text
-                    node.update_status_from_dates()
-                    self.recalculate_all_dates()
-                    self.validate_child_dates(item)
-                    self.refresh_entire_tree()
-                else:
-                    # 2. Show the informative review popup. It leads with whether
-                    #    the project end date slips or holds, then lists every
-                    #    task that shifts. OK applies; Cancel reverts.
-                    dialog = ImpactReviewDialog(review, self)
-                    if usage_logger.timed_exec(dialog, "impact_review") and dialog.result_action:
-                        if dialog.result_action == "update_all":
-                            # Standard ripple: move this start, re-run the
-                            # scheduler so children and downstream predecessors
-                            # all update in one pass.
-                            old_start = node.start_date
-                            old_end = node.end_date
-                            if old_start and old_end and text != old_start:
-                                dur = WorkdayCalculator.calculate_duration(old_start, old_end)
-                                node.start_date = text
-                                node.end_date = WorkdayCalculator.add_workdays(text, dur)
-                            else:
-                                node.start_date = text
-                            node.update_status_from_dates()
-                            self.recalculate_all_dates()
-                            self.validate_child_dates(item)
-                            self.refresh_entire_tree()
-                        elif dialog.result_action == "keep_others":
-                            # Gap: shift only this task, leave siblings alone.
-                            old_start = node.start_date
-                            old_end = node.end_date
-                            if old_start and old_end:
-                                dur = WorkdayCalculator.calculate_duration(old_start, old_end)
-                                node.start_date = text
-                                node.end_date = WorkdayCalculator.add_workdays(text, dur)
-                            else:
-                                node.start_date = text
-                            node.update_status_from_dates()
-                            self.recalculate_all_dates()
-                            self.refresh_entire_tree()
-                    else:
-                        # Cancel: revert the typed text.
-                        item.setText(Columns.START, node.start_date)
-                    
             elif column == Columns.END:
-                text = model_date(text)
-                # First end date typed on a fresh row: apply silently and
-                # re-baseline — a brand-new line is on track by definition
-                # until its schedule has been set once. No popup, no delay.
-                if getattr(node, "baseline_provisional", False):
-                    node.set_date('end', text)
-                    self.validate_child_dates(item)
-                    self.recalculate_all_dates()
-                    self.refresh_entire_tree()
-                    self._restamp_provisional_baseline(node)
-                    review = None
-                else:
-                    # End-date replanning reviews schedule impact only. Recording
-                    # a real delay is a separate, deliberate action.
-                    review = self._simulate_impact(node, new_end=text)
-                if review is not None:
-                    dialog = ImpactReviewDialog(review, self)
-                    if usage_logger.timed_exec(dialog, "impact_review") and dialog.result_action:
-                        node.set_date('end', text)
-                        self.validate_child_dates(item)
-                        self.recalculate_all_dates()
-                        self.refresh_entire_tree()
-                        usage_logger.log("schedule_edit", field="end", outcome="applied")
-                    else:
-                        # Cancel: revert the typed end date.
-                        item.setText(Columns.END, node.end_date or "")
+                edit_value = item.data(Columns.END, Qt.ItemDataRole.EditRole)
+                text = model_date(edit_value or text)
+                self.blockSignals(False)
+                self.commit_picked_date(node, "end", text, via="dropdown")
+                self.update_filter_options()
+                return
             elif column == Columns.STATUS: 
                 node.set_status(text)
                 # Status change might affect parent, refresh tree
@@ -2937,42 +3163,27 @@ class TreeGridView(QTreeWidget):
             elif column == Columns.NOTES: node.notes = text
             elif column == Columns.DELAY: pass  # read-only, skip
             elif column == Columns.DURATION:
-                # A duration change is normal replanning and gets an impact
-                # review only. The handler tail re-normalizes the
-                # Duration cell, so cancels/invalid input need no manual revert.
+                # Duration stays automatic (end_rule=duration). Apply
+                # immediately — no impact popup. The handler tail journals
+                # old → new after signals are unblocked.
                 try:
                     days = int(text)
                 except ValueError:
                     days = None
                 if days is not None and node.start_date:
-                    new_end = WorkdayCalculator.add_workdays(
-                        node.start_date, days if days >= 1 else 1)
-                    # First duration typed on a fresh row: silent + re-baseline
-                    # (same rule as the END branch above).
+                    project_before = self._project_finish()
+                    node.set_duration(days)
+                    self.validate_child_dates(item)
+                    self.recalculate_all_dates()
+                    self.refresh_entire_tree()
                     if getattr(node, "baseline_provisional", False):
-                        node.set_duration(days)
-                        self.validate_child_dates(item)
-                        self.recalculate_all_dates()
-                        self.refresh_entire_tree()
                         self._restamp_provisional_baseline(node)
-                        review = None
-                    else:
-                        review = self._simulate_impact(node, new_end=new_end)
-                    if review is not None:
-                        dialog = ImpactReviewDialog(review, self)
-                        if usage_logger.timed_exec(dialog, "impact_review") and dialog.result_action:
-                            node.set_duration(days)
-                            self.validate_child_dates(item)
-                            self.recalculate_all_dates()
-                            self.refresh_entire_tree()
-                            usage_logger.log("schedule_edit", field="duration", outcome="applied")
-                    else:
-                        node.set_duration(days)
-                        self.validate_child_dates(item)
-                        self.recalculate_all_dates()
-                        self.refresh_entire_tree()
-                        usage_logger.log("schedule_edit", field="duration",
-                                         outcome="applied_no_review")
+                    project_after = self._project_finish()
+                    if (project_before and project_after
+                            and project_before != project_after):
+                        journal_lines.append(
+                            f"Project end {project_before} → {project_after} "
+                            f"(from '{node.name}')")
             
             # Refresh duration (it's calculated)
             item.setText(Columns.DURATION, node.duration)
